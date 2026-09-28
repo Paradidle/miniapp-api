@@ -1,0 +1,9 @@
+# 构建上下文仅保留 Maven 构建产物（jar），源码与中间产物不进上下文
+src/
+target/*
+!target/*.jar
+
+# IDE 与本地文件
+.idea/
+*.iml
+*.log

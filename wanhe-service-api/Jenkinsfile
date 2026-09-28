@@ -1,0 +1,98 @@
+// ============================================================
+// 万合物管小程序后端接口（wanhe-service-api）
+// Jenkins 声明式流水线：拉取代码 → Maven 打包 → 构建镜像 → 本机重启容器 → 健康检查
+//
+// 前置配置（均在 Jenkins 页面完成；GitHub Token 只存 Jenkins 凭据，严禁写入本文件）：
+//   1. 创建凭据：Manage Jenkins → Credentials → Add Credentials
+//        类型：   Username with password
+//        用户名：你的 GitHub 用户名
+//        密码：  GitHub Personal Access Token（勾选 repo 权限）
+//        ID：    github-pat
+//   2. 新建任务：Pipeline（或 Multibranch Pipeline）
+//        Definition：    Pipeline script from SCM
+//        Repository URL：https://github.com/Paradidle/miniapp-api.git
+//        Credentials：   github-pat
+//        Script Path：   wanhe-service-api/Jenkinsfile
+//
+// 运行环境要求（Jenkins 所在服务器）：
+//   JDK 21、Maven、Docker 已安装，且 jenkins 用户有执行 docker 命令的权限
+// ============================================================
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        REPO_URL    = 'https://github.com/Paradidle/miniapp-api.git'
+        CREDS_ID    = 'github-pat'                  // Jenkins 凭据 ID，对应 GitHub Token
+        MODULE_NAME = 'wanhe-service-api'
+        APP_PORT    = '8082'
+    }
+
+    stages {
+        stage('拉取代码') {
+            steps {
+                deleteDir()
+                git branch: 'main', url: env.REPO_URL, credentialsId: env.CREDS_ID
+            }
+        }
+
+        stage('Maven 打包') {
+            steps {
+                sh "mvn -B clean package -pl ${MODULE_NAME} -am"
+            }
+        }
+
+        stage('构建镜像') {
+            steps {
+                sh "docker build -t ${MODULE_NAME}:${BUILD_NUMBER} ${MODULE_NAME}"
+            }
+        }
+
+        stage('重启容器') {
+            steps {
+                sh """
+                    docker stop ${MODULE_NAME} 2>/dev/null || true
+                    docker rm ${MODULE_NAME} 2>/dev/null || true
+                    docker run -d --name ${MODULE_NAME} \\
+                        --restart unless-stopped \\
+                        -p ${APP_PORT}:${APP_PORT} \\
+                        -e JAVA_TOOL_OPTIONS="-Xms256m -Xmx512m" \\
+                        ${MODULE_NAME}:${BUILD_NUMBER}
+                """
+            }
+        }
+
+        stage('健康检查') {
+            steps {
+                sh """
+                    for i in \$(seq 1 30); do
+                        if curl -sf http://localhost:${APP_PORT}/api/health; then
+                            echo ""
+                            echo "服务启动成功"
+                            exit 0
+                        fi
+                        sleep 2
+                    done
+                    echo "服务启动失败（60 秒内未通过健康检查），最近容器日志："
+                    docker logs --tail 100 ${MODULE_NAME}
+                    exit 1
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            archiveArtifacts artifacts: "${MODULE_NAME}/target/*.jar", allowEmptyArchive: true
+        }
+        failure {
+            // 可在此接入钉钉 / 企业微信机器人做构建通知
+            echo "流水线失败，请检查构建日志"
+        }
+    }
+}
