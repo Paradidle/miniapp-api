@@ -1,2 +1,2 @@
-# prosperity-bookkeeping
-富贵记账小程序
+# miniapp-api
+小程序后端接口
