@@ -28,4 +28,4 @@ target/
 
 # IntelliJ IDEA 模块文件
 *.iml
-/.idea/
+*/.idea/*
