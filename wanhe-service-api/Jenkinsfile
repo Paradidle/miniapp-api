@@ -16,6 +16,12 @@
 //
 // 运行环境要求（Jenkins 所在服务器）：
 //   JDK 21、Maven、Docker 已安装，且 jenkins 用户有执行 docker 命令的权限
+//
+// 卡顿排查：日志中 "====>" 是最新进度标记，长时间停在哪一步就说明卡在哪：
+//   - 停在"拉取代码"   → 服务器到 github.com 的网络问题
+//   - 停在"Maven 打包" → 依赖下载慢，建议配置 Maven 镜像（如阿里云）
+//   - 停在"构建镜像"   → 拉取 Docker Hub 基础镜像慢，建议配置 Docker 镜像加速器
+//   每个阶段均设有超时保护，卡死时会自动失败并报出超时的阶段
 // ============================================================
 pipeline {
     agent any
@@ -24,6 +30,8 @@ pipeline {
         timestamps()
         buildDiscarder(logRotator(numToKeepStr: '20'))
         disableConcurrentBuilds()
+        // 全局兜底超时：卡死时自动失败，避免无限等待（数值可按需调整）
+        timeout(time: 60, unit: 'MINUTES')
     }
 
     environment {
@@ -35,29 +43,51 @@ pipeline {
 
     stages {
         stage('拉取代码') {
+            options {
+                // 网络异常时快速失败，而不是无限等待
+                timeout(time: 10, unit: 'MINUTES')
+            }
             steps {
+                echo "====> [1/5] 拉取代码中：${env.REPO_URL}（main）"
                 deleteDir()
                 git branch: 'main', url: env.REPO_URL, credentialsId: env.CREDS_ID
+                echo "====> [1/5] 代码拉取完成"
             }
         }
 
         stage('Maven 打包') {
+            options {
+                timeout(time: 25, unit: 'MINUTES')
+            }
             steps {
+                echo "====> [2/5] Maven 打包中（首次构建需下载依赖，耗时较长）"
                 sh "mvn -B clean package -pl ${MODULE_NAME} -am"
+                echo "====> [2/5] Maven 打包完成"
             }
         }
 
         stage('构建镜像') {
+            options {
+                timeout(time: 20, unit: 'MINUTES')
+            }
             steps {
+                echo "====> [3/5] 拉取基础镜像 eclipse-temurin:21-jre（首次较慢，长时间无响应请检查 Docker Hub 网络或镜像加速配置）"
+                sh "docker pull eclipse-temurin:21-jre"
+                echo "====> [3/5] 开始构建应用镜像 ${MODULE_NAME}:${BUILD_NUMBER}"
                 sh "docker build -t ${MODULE_NAME}:${BUILD_NUMBER} ${MODULE_NAME}"
+                echo "====> [3/5] 镜像构建完成"
             }
         }
 
         stage('重启容器') {
             steps {
+                echo "====> [4/5] 停止并移除旧容器（如存在）"
                 sh """
                     docker stop ${MODULE_NAME} 2>/dev/null || true
                     docker rm ${MODULE_NAME} 2>/dev/null || true
+                """
+                echo "====> [4/5] 启动新容器 ${MODULE_NAME}:${BUILD_NUMBER}（端口 ${APP_PORT}）"
+                sh """
                     docker run -d --name ${MODULE_NAME} \\
                         --restart unless-stopped \\
                         -p ${APP_PORT}:${APP_PORT} \\
@@ -68,17 +98,22 @@ pipeline {
         }
 
         stage('健康检查') {
+            options {
+                timeout(time: 3, unit: 'MINUTES')
+            }
             steps {
+                echo "====> [5/5] 等待服务就绪（每 2 秒检查一次，最长 60 秒）"
                 sh """
                     for i in \$(seq 1 30); do
+                        echo "---- 健康检查第 \${i}/30 次：GET http://localhost:${APP_PORT}/api/health"
                         if curl -sf http://localhost:${APP_PORT}/api/health; then
                             echo ""
-                            echo "服务启动成功"
+                            echo "====> [5/5] 服务启动成功，健康检查通过"
                             exit 0
                         fi
                         sleep 2
                     done
-                    echo "服务启动失败（60 秒内未通过健康检查），最近容器日志："
+                    echo "====> [5/5] 服务启动失败（60 秒内未通过健康检查），最近容器日志："
                     docker logs --tail 100 ${MODULE_NAME}
                     exit 1
                 """
