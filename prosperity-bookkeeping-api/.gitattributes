@@ -1,0 +1,14 @@
+# 默认让 git 自动识别文本文件
+* text=auto
+
+# 必须保持 LF 的文件：Windows 检出时也不能转成 CRLF（否则 Linux 上无法执行/解析）
+*.sh        text eol=lf
+*.py        text eol=lf
+*.conf      text eol=lf
+Dockerfile  text eol=lf
+*.sql       text eol=lf
+requirements.txt text eol=lf
+
+# Windows 专用脚本保持 CRLF
+*.bat       text eol=crlf
+*.cmd       text eol=crlf

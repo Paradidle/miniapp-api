@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.env
+config.ini
+*.log
+gunicorn.pid
+.idea/
+.vscode/
+uploads/
+# 部署打包产物
+*.tar.gz
+*.zip
