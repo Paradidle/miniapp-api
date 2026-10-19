@@ -84,3 +84,7 @@ class Config:
     # 上传文件目录（头像等），默认项目根目录下 uploads/（ini 中留空也走默认）
     UPLOAD_DIR = _cfg('business', 'upload_dir', '', env='UPLOAD_DIR') or _default_upload_dir
     MAX_UPLOAD_MB = _cfgi('business', 'max_upload_mb', 2)
+
+    # 对外访问基地址：头像上传后拼成 <PUBLIC_BASE_URL>/uploads/avatars/xxx 返回给小程序，
+    # 需与 nginx 的 /uploads/ 静态配置对应
+    PUBLIC_BASE_URL = _cfg('business', 'public_base_url', '', env='PUBLIC_BASE_URL')
