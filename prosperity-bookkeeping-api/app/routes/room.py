@@ -308,3 +308,46 @@ def my_rooms():
             })
 
     return ok({'rooms': result})
+
+
+@bp.route('/api/room/leave', methods=['POST'])
+@login_required
+def leave_room():
+    """退出房间：仅 waiting 状态可退出；房主请改用解散房间。"""
+    body = request.get_json(silent=True) or {}
+    room = get_room_or_404(room_id=body.get('roomId'))
+    if not room:
+        return fail('房间不存在')
+    if room['status'] != 0:
+        return fail('游戏开始后不可退出')
+    if room['owner_id'] == g.user['id']:
+        return fail('房主请使用解散房间')
+
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            'DELETE FROM room_members WHERE room_id=%s AND user_id=%s',
+            (room['id'], g.user['id'])
+        )
+        if cur.rowcount == 0:
+            return fail('你不在该房间')
+    return ok()
+
+
+@bp.route('/api/room/dismiss', methods=['POST'])
+@login_required
+def dismiss_room():
+    """解散房间：仅房主 + waiting 状态。删除房间及成员记录（waiting 无流水，可安全删）。"""
+    body = request.get_json(silent=True) or {}
+    room = get_room_or_404(room_id=body.get('roomId'))
+    if not room:
+        return fail('房间不存在')
+    err = _require_owner(room)
+    if err:
+        return err
+    if room['status'] != 0:
+        return fail('仅等待中的房间可解散')
+
+    with db_cursor(commit=True) as cur:
+        cur.execute('DELETE FROM room_members WHERE room_id=%s', (room['id'],))
+        cur.execute('DELETE FROM rooms WHERE id=%s AND status=0', (room['id'],))
+    return ok()
