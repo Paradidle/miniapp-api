@@ -54,6 +54,10 @@ def avatar_upload():
     data_b64 = str(body.get('data') or '')
     ext = str(body.get('ext') or 'jpeg').lower().strip('.')
 
+    # 对外基地址未配置时上传会得到不可用的相对路径，直接拒绝避免脏数据
+    if not Config.PUBLIC_BASE_URL:
+        return fail('服务端未配置 public_base_url')
+
     # 兼容 dataURL 前缀（data:image/jpeg;base64,xxxx）
     if data_b64.startswith('data:'):
         data_b64 = data_b64.split(',', 1)[-1]
