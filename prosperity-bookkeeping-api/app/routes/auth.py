@@ -87,7 +87,7 @@ def update_user():
 @bp.route('/api/room/member/update', methods=['POST'])
 @login_required
 def update_member_info():
-    """修改当前用户在某个房间内的昵称/头像（同时同步全局资料）。"""
+    """修改当前用户在某个房间内的昵称（头像不传或传空时保留原值）。"""
     body = request.get_json(silent=True) or {}
     room_id = body.get('roomId')
     nickname, avatar_url = _extract_profile(body)
@@ -105,12 +105,15 @@ def update_member_info():
 
     with db_cursor(commit=True) as cur:
         cur.execute(
-            '''UPDATE room_members SET nickname=%s, avatar_url=%s
+            '''UPDATE room_members
+               SET nickname=%s, avatar_url=IF(%s='', avatar_url, %s)
                WHERE room_id=%s AND user_id=%s''',
-            (nickname, avatar_url, room_id, g.user['id'])
+            (nickname, avatar_url, avatar_url, room_id, g.user['id'])
         )
         cur.execute(
-            'UPDATE users SET nickname=%s, avatar_url=%s WHERE id=%s',
-            (nickname, avatar_url, g.user['id'])
+            '''UPDATE users
+               SET nickname=%s, avatar_url=IF(%s='', avatar_url, %s)
+               WHERE id=%s''',
+            (nickname, avatar_url, avatar_url, g.user['id'])
         )
     return ok({'userInfo': {'nickName': nickname, 'avatarUrl': avatar_url}})
