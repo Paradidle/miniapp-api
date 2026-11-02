@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import llm as llm_client
 from .compiler import UnsupportedIndicator, compile_strategy, INDICATORS
 from .engine import Market
 from .store import Repo
@@ -119,6 +120,26 @@ def create_strategy(body: StrategyIn):
 class CompileIn(BaseModel):
     text: str
     run_backtest: bool = True
+
+
+@app.get('/api/llm/status')
+def llm_status():
+    """LLM 配置状态（不发送真实请求，不泄露 key）"""
+    cfg = llm_client.config()
+    return dict(
+        configured=llm_client.is_configured(),
+        base_url=cfg['base_url'],
+        model=cfg['model'],
+        json_mode=cfg['json_mode'],
+        timeout=cfg['timeout'],
+        api_key_hint=(cfg['api_key'][:4] + '****' + cfg['api_key'][-4:]) if cfg['api_key'] else '',
+    )
+
+
+@app.post('/api/llm/test')
+def llm_test():
+    """真实调用一次 LLM，验证 key / 网络 / 模型"""
+    return llm_client.test_connection()
 
 
 @app.get('/api/indicators')

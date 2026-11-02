@@ -235,6 +235,17 @@ class Market:
                 hn = self.indicator('high_n', w)
                 ln = self.indicator('low_n', w)
                 v = (hn - ln) / C
+            elif name == 'in_box':
+                hn = self.indicator('high_n', w)
+                ln = self.indicator('low_n', w)
+                # 收盘价严格落在「过去 w 日高低区间」内 = 未突破也未跌破
+                ok = (C > ln) & (C < hn)
+                v = np.where(np.isfinite(ln) & np.isfinite(hn), ok.astype(np.float32), np.nan)
+            elif name == 'box_amplitude':
+                hn = self.indicator('high_n', w)
+                ln = self.indicator('low_n', w)
+                # 箱体高度 / 箱底（比 amplitude 更贴近"箱体"定义）
+                v = (hn - ln) / ln
             elif name == 'limit_up':
                 r = self.indicator('ret', 1)
                 v = (r >= 0.098).astype(np.float32)
@@ -296,6 +307,10 @@ class Market:
                 mask &= v <= val
             elif op == '<':
                 mask &= v < val
+            elif op == '==':
+                mask &= v == val
+            elif op == '!=':
+                mask &= v != val
             elif op == 'between':
                 lo, hi = val
                 mask &= (v >= lo) & (v <= hi)
@@ -311,6 +326,7 @@ class Market:
         rank_cfg = dsl.get('rank_by')
         rank = (self.indicator(rank_cfg['ind'], int(rank_cfg.get('window', 1)))
                 if rank_cfg else None)
+        rank_desc = bool(rank_cfg.get('desc', True)) if rank_cfg else True
         n_per_day = int(dsl.get('entry', {}).get('max_per_day', 1))
         ex = dsl.get('exit', {})
         tp = float(ex.get('take_profit', 0.10))
@@ -323,8 +339,9 @@ class Market:
             if cand.size == 0:
                 continue
             if rank is not None:
-                r = rank[cand, t]
-                cand = cand[np.argsort(-np.nan_to_num(r, nan=-9e9))]
+                r = np.nan_to_num(rank[cand, t], nan=(np.nan if not rank_desc else -9e9))
+                r = np.nan_to_num(r, nan=9e9 if not rank_desc else -9e9)
+                cand = cand[np.argsort(-r if rank_desc else r)]
             for i in cand[:n_per_day]:
                 entry = self.O[i, t + 1]
                 if not np.isfinite(entry) or entry <= 0:

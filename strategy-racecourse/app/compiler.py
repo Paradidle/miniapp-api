@@ -30,6 +30,8 @@ INDICATORS = {
     'shadow_down':    dict(window=False, desc='下影线 / 收盘价'),
     'amplitude':      dict(window=True,  desc='N 日振幅 / 收盘价'),
     'limit_up':       dict(window=False, desc='是否涨停（0/1）'),
+    'in_box':         dict(window=True,  desc='收盘价是否在箱体内（1=未突破未跌破）'),
+    'box_amplitude':  dict(window=True,  desc='箱体高度/箱底'),
 }
 
 UNSUPPORTED_HINTS = {
@@ -119,14 +121,36 @@ def rule_compile(text: str) -> dict:
     def pct(m, d=1.0):
         return round(float(m) / 100.0, 4) if m else d
 
-    # 箱体位置
-    m = re.search(r'(?:箱体位置|箱底|箱体底部|位置)\D{0,6}?' + _PCT, text)
+    # 箱体位置区间：「中低位」「低位 X%~Y%」
+    m = re.search(r'箱体\D{0,4}?(\d+)\s*%?\s*[-~到]\s*(\d+)\s*%', text)
+    pos_set = False
+    if m:
+        lo, hi = pct(m.group(1)), pct(m.group(2))
+        sig.append(dict(ind='box_position', window=120, op='between', value=[lo, hi]))
+        notes.append(f'箱体位置 {lo*100:.0f}%~{hi*100:.0f}%')
+        pos_set = True
+    elif re.search(r'中低位|低位区', text):
+        sig.append(dict(ind='box_position', window=120, op='between', value=[0.05, 0.40]))
+        notes.append('箱体位置 5%~40%（中低位）')
+        pos_set = True
+    elif re.search(r'箱体低位|低位|箱底', text):
+        sig.append(dict(ind='box_position', window=120, op='<=', value=0.2))
+        notes.append('箱体位置≤20%')
+        pos_set = True
+
+    # 箱体位置（单边阈值，区间已解析则跳过）
+    m = None if pos_set else re.search(r'(?:箱体位置|箱底|箱体底部|位置)\D{0,6}?' + _PCT, text)
     if m:
         sig.append(dict(ind='box_position', window=120, op='<=', value=pct(m.group(1))))
         notes.append(f'箱体位置≤{m.group(1)}%')
     elif '箱底' in text or '箱体底部' in text:
         sig.append(dict(ind='box_position', window=120, op='<=', value=0.2))
         notes.append('箱体位置≤20%')
+
+    # 箱体内（未突破未跌破）
+    if re.search(r'箱体内|不突破|不跌破|不要突破|箱体之中', text):
+        sig.append(dict(ind='in_box', window=120, op='==', value=1))
+        notes.append('收盘价在箱体内')
 
     # 放量 / 缩量
     m = re.search(r'放量\s*' + _NUM + r'\s*倍', text) or re.search(r'量比\D{0,4}?' + _NUM, text)
@@ -149,10 +173,19 @@ def rule_compile(text: str) -> dict:
     if m:
         sig.append(dict(ind='shadow_down', op='>=', value=pct(m.group(1))))
         notes.append(f'下影线≥{m.group(1)}%')
+    elif '下影线' in text:
+        sig.append(dict(ind='shadow_down', op='>=', value=0.02))
+        notes.append('下影线≥2%')
     m = re.search(r'上影线\D{0,6}?' + _PCT, text)
     if m:
         sig.append(dict(ind='shadow_up', op='>=', value=pct(m.group(1))))
         notes.append(f'上影线≥{m.group(1)}%')
+
+    # 明确要求"剔除突破/跌破" → 只保留箱体内
+    if re.search(r'剔除.{0,4}突破|不要突破|不突破', text):
+        if not any(x['ind'] == 'in_box' for x in sig):
+            sig.append(dict(ind='in_box', window=120, op='==', value=1))
+            notes.append('剔除突破（收盘价在箱体内）')
 
     # 突破 N 日新高
     m = re.search(r'突破\s*' + _NUM + r'\s*日\s*新高', text) or re.search(r'(\d+)\s*日新高', text)
@@ -195,12 +228,26 @@ def rule_compile(text: str) -> dict:
     if m:
         hd = int(float(m.group(1)))
 
+    # 排序：用户说"最便宜的/股价最低"时按 close 升序
+    rank = dict(ind=sig[0]['ind'], desc=True)
+    if 'window' in sig[0]:
+        rank['window'] = sig[0]['window']
+    if re.search(r'最便宜|股价最低|价格最低|低价|便宜的', text):
+        rank = dict(ind='close', desc=False)
+        notes.append('按股价从低到高选')
+    elif re.search(r'从低到高|最低位|位置最低|箱底最低|上升排列', text):
+        rank = dict(ind='box_position', window=120, desc=False)
+        notes.append('按箱体位置从低到高选')
+    elif re.search(r'从高到低|最高位|位置最高', text):
+        rank = dict(ind='box_position', window=120, desc=True)
+        notes.append('按箱体位置从高到低选')
+
     name = text.strip().replace('\n', ' ')[:12] or '未命名策略'
     return dict(
         name=name,
         interpreted_cn='；'.join(notes) + f'。止盈{tp*100:.0f}% / 止损{sl*100:.0f}% / 持满{hd}日',
         dsl=dict(signal=sig,
-                 rank_by=dict(ind=sig[0]['ind'], **({'window': sig[0]['window']} if 'window' in sig[0] else {}), desc=True),
+                 rank_by=rank,
                  entry=dict(max_per_day=1),
                  exit=dict(take_profit=tp, stop_loss=sl, max_hold_days=hd)),
         unsupported=[],
@@ -208,31 +255,81 @@ def rule_compile(text: str) -> dict:
     )
 
 
+# ---------------- 提示词 ----------------
+def _indicator_table() -> str:
+    lines = []
+    for k, v in INDICATORS.items():
+        w = '需要 window 参数' if v['window'] else '无需 window'
+        lines.append(f'- {k}: {v["desc"]}（{w}）')
+    return '\n'.join(lines)
+
+
+def _system_prompt() -> str:
+    return f"""你是量化策略编译器。把用户的中文交易策略翻译成严格的 JSON DSL。
+
+可用指标（只能从这里选，其他一律不支持）：
+{_indicator_table()}
+
+输出 JSON 格式：
+{{
+  "name": "策略名（≤12字）",
+  "interpreted_cn": "用一句话复述规则，必须包含所有阈值",
+  "dsl": {{
+    "signal": [{{"ind":"box_position","window":120,"op":"<=","value":0.2}}],
+    "rank_by": {{"ind":"box_position","window":120,"desc":false}},
+    "entry": {{"max_per_day": 1}},
+    "exit": {{"take_profit":0.15,"stop_loss":0.12,"max_hold_days":20}}
+  }},
+  "unsupported": []
+}}
+
+规则：
+1. op 只能是 >= > <= < == != between；between 时 value 写成 [下限, 上限]
+2. 百分比一律转小数：5% → 0.05
+3. 未指定止盈止损时默认 take_profit=0.08, stop_loss=0.08, max_hold_days=20
+4. rank_by.desc=true 表示从大到小选，false 表示从小到大选
+   - 用户说"位置最低/从低到高/最便宜/股价最低"时用 desc=false
+5. box_position 是 0~1 的位置，>1 表示突破箱体上方，<0 表示跌破箱体下方
+   - 用户要求"剔除突破/跌破"时，用 between 限定在 [0,1] 区间内，
+     或加 {{"ind":"in_box","op":"==","value":1}}
+6. 用户提到换手率/市值/财务/北向/龙虎榜/分钟线等，写进 unsupported 数组，不要编造指标
+7. 只输出 JSON，不要任何解释文字
+"""
+
+
 # ---------------- LLM 路径 ----------------
-def llm_compile(text: str) -> dict:
-    key = os.environ.get('LLM_API_KEY') or os.environ.get('DEEPSEEK_API_KEY')
-    base = os.environ.get('LLM_BASE_URL', 'https://api.deepseek.com')
-    model = os.environ.get('LLM_MODEL', 'deepseek-flash')
-    body = {
-        'model': model,
-        'messages': [
-            {'role': 'system', 'content': SYSTEM_PROMPT},
-            {'role': 'user', 'content': text},
-        ],
-        'temperature': 0,
-        'response_format': {'type': 'json_object'},
-    }
-    req = urllib.request.Request(
-        base.rstrip('/') + '/chat/completions',
-        data=json.dumps(body, ensure_ascii=False).encode('utf-8'),
-        headers={'Content-Type': 'application/json',
-                 'Authorization': f'Bearer {key}'},
-        method='POST')
-    with urllib.request.urlopen(req, timeout=60) as r:
-        data = json.loads(r.read().decode('utf-8'))
-    content = data['choices'][0]['message']['content']
-    out = json.loads(content)
-    out['source'] = 'llm'
+def _llm_compile(text: str, max_repair: int = 1) -> dict:
+    """调用 LLM 编译；如果产出了不支持的指标，回喂错误让它修正一次"""
+    from . import llm
+
+    messages = [
+        {'role': 'system', 'content': _system_prompt()},
+        {'role': 'user', 'content': text},
+    ]
+    r = llm.chat_json(messages)
+    out = r['data']
+    source = 'llm'
+
+    for _ in range(max_repair):
+        dsl = out.get('dsl') or {}
+        bad = validate(dsl)
+        declared = out.get('unsupported') or []
+        problem = sorted(set(bad) | set(declared))
+        if not problem:
+            break
+        messages.append({'role': 'assistant', 'content': r['raw']})
+        messages.append({'role': 'user', 'content':
+            f'你使用了不可用的指标：{problem}。'
+            f'只能使用以下指标：{", ".join(INDICATORS)}。'
+            f'请重新输出完整 JSON，不要使用任何其他指标，不要解释。'})
+        r = llm.chat_json(messages)
+        out = r['data']
+        source = 'llm-repaired'
+
+    out['source'] = source
+    out['raw'] = r['raw']
+    out['latency'] = r['latency']
+    out['usage'] = r.get('usage', {})
     return out
 
 
@@ -242,24 +339,33 @@ def compile_strategy(text: str, prefer_llm: bool = True) -> dict:
 
     抛 UnsupportedIndicator: 描述里有不支持的指标或无法识别。
     """
-    has_key = bool(os.environ.get('LLM_API_KEY') or os.environ.get('DEEPSEEK_API_KEY'))
+    from . import llm
+
+    warnings = []
     result = None
-    if prefer_llm and has_key:
+
+    if prefer_llm and llm.is_configured():
         try:
-            result = llm_compile(text)
-        except Exception as e:
+            result = _llm_compile(text)
+        except llm.LLMError as e:
+            warnings.append(f'LLM 调用失败，已回退规则解析：{e}')
             result = None
-            err = str(e)
-        if result is None:
-            result = rule_compile(text)
-            result['warnings'] = [f'LLM 调用失败，已回退规则解析: {err}']
-    else:
+
+    if result is None:
         result = rule_compile(text)
 
-    bad = validate(result['dsl'])
+    # 最终校验：LLM 或规则路径都必须过白名单
+    bad = validate(result.get('dsl') or {})
     if bad:
         raise UnsupportedIndicator(sorted(set(bad)))
-    # 用户主动声明了不支持的指标
     if result.get('unsupported'):
         raise UnsupportedIndicator(result['unsupported'])
+
+    if 'dsl' not in result or not (result['dsl'].get('signal')):
+        raise UnsupportedIndicator(['无法从描述中识别出任何支持的指标'])
+
+    result.setdefault('name', text.strip()[:12])
+    result.setdefault('interpreted_cn', '')
+    if warnings:
+        result.setdefault('warnings', []).extend(warnings)
     return result

@@ -57,7 +57,11 @@ curl http://127.0.0.1:9201/healthz
 | `RACE_MIN_PRICE` | 2.0 | 低价股门槛 |
 | `RACE_MIN_FLOAT_MV` | 20 | 流通市值门槛（亿） |
 | `RACE_RISK` | on | 设为 `off` 可整体关闭风险过滤 |
+| `LLM_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容接口地址 |
 | `LLM_API_KEY` | 无 | 配置后启用 LLM 编译；不配则走规则解析 |
+| `LLM_MODEL` | `deepseek-chat` | 模型名 |
+| `LLM_TIMEOUT` | 90 | 单次调用超时（秒） |
+| `LLM_JSON_MODE` | on | 服务不支持 response_format 时设 off |
 
 ## 4. 每日任务
 
@@ -225,3 +229,63 @@ curl -X POST http://127.0.0.1:9201/api/strategies/<id>/backtest
 ```
 
 若关闭后恢复正常，说明是过滤条件过严（调低 `RACE_MIN_PRICE` / `RACE_MIN_FLOAT_MV` 即可）。
+
+## 11. 接入 LLM（自然语言 → 策略）
+
+配置后，前端"新建策略"用自然语言描述即可生成 DSL，不需要改代码。
+
+### 配置
+
+```bash
+# start.sh 里或 Jenkins environment 里加
+export LLM_API_KEY=sk-xxxxxxxx
+export LLM_BASE_URL=https://api.deepseek.com      # 可选
+export LLM_MODEL=deepseek-chat                    # 可选
+```
+
+任何 OpenAI 兼容接口都能用：
+
+| 服务 | LLM_BASE_URL | LLM_MODEL 示例 |
+|---|---|---|
+| DeepSeek | `https://api.deepseek.com` | `deepseek-chat` |
+| 硅基流动 | `https://api.siliconflow.cn` | `Qwen/Qwen2.5-72B-Instruct` |
+| 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode` | `qwen-plus` |
+| OpenAI | `https://api.openai.com` | `gpt-4o-mini` |
+
+### 验证
+
+```bash
+curl http://127.0.0.1:9201/api/llm/status
+# {"configured":true,"base_url":"...","model":"deepseek-chat","api_key_hint":"sk-x****abcd"}
+
+curl -X POST http://127.0.0.1:9201/api/llm/test
+# {"ok":true,"model":"deepseek-chat","latency":1.2,"usage":{...}}
+
+# 前端也会在"新建策略"面板顶部显示引擎状态，点"测试"直连验证
+```
+
+### 工作流程
+
+1. 用户输入「箱体低位买下影线，止盈15%止损12%」
+2. LLM 输出 `{name, interpreted_cn, dsl, unsupported}`
+3. **白名单校验**：DSL 里出现不在白名单的指标 → 把错误回喂给 LLM 让它改（最多 1 轮）
+4. 仍然不合法 → 422，告诉用户哪个指标不支持
+5. LLM 不可用（无 key / 401 / 超时）→ **自动降级为规则解析**，并在响应里标 `warnings`
+
+响应里的 `source` 字段说明来源：`llm` / `llm-repaired` / `rule`。
+
+### 安全边界
+
+- LLM 只输出受限 DSL，**不生成可执行代码**，不存在代码注入风险
+- 所有指标必须过白名单，编造的指标会被拦下
+- 因果性由数据层保证（指标全部是 rolling，用未来数据需要显式破坏）
+
+### 常见问题
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `{"configured": false}` | 没设 LLM_API_KEY | 设置环境变量后重启 |
+| `HTTP 401` | key 无效或过期 | 换 key |
+| `HTTP 400 response_format` | 服务不支持 JSON 模式 | 设 `LLM_JSON_MODE=off` |
+| 编译很慢（>10s） | 模型太大或网络差 | 换小模型，或调 `LLM_TIMEOUT` |
+| 一直 `source: rule` | LLM 调用失败后降级了 | 看响应里的 `warnings` |

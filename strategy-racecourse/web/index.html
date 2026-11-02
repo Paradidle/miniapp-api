@@ -70,6 +70,12 @@
         <div class="tab" data-mode="dsl" onclick="switchMode('dsl')">DSL</div>
       </div>
 
+      <div id="llmBar" class="hint" style="margin:0 0 10px">
+        <span id="llmStatus">检测中…</span>
+        <button class="ghost" style="margin:6px 0 0;padding:4px 10px;font-size:12px"
+                onclick="testLLM()">测试</button>
+      </div>
+
       <div id="modeNL">
         <textarea id="nlText" placeholder="例：箱体位置低于20%且放量1.5倍时买入，止盈15%止损12%，持有20天"></textarea>
         <div id="indList" class="hint" style="margin-top:8px"></div>
@@ -158,6 +164,12 @@ function render(){
       }
     };
   });
+  // 轴范围：对称 + 最小跨度，避免单条数据时比例失真
+  const vals = data.map(d => d.value);
+  const peak = Math.max(...vals.map(Math.abs), 0);
+  // 最小跨度 0.5%；超过则按实际最大值上浮 15%
+  const span = Math.max(peak * 1.15, 0.5);
+
   chart.setOption({
     grid:{left:170, right:130, top:24, bottom:34},
     tooltip:{trigger:'item', formatter: p => {
@@ -165,7 +177,8 @@ function render(){
       return `<b>${p.name}</b><br/>${d.src}平均每笔 ${p.value.toFixed(2)}%<br/>`
            + `胜率 ${d.win.toFixed(1)}%<br/>${d.n} 笔 · PF ${d.pf.toFixed(2)}`;
     }},
-    xAxis:{type:'value', axisLabel:{formatter:v=>v+'%', color:'#8b9bb4'},
+    xAxis:{type:'value', min:-span, max:span,
+           axisLabel:{formatter:v=>v.toFixed(2)+'%', color:'#8b9bb4'},
            splitLine:{lineStyle:{color:'#1d2740'}}},
     yAxis:{type:'category', data:names, inverse:true,
            axisLabel:{color:'#c9d4e6', fontSize:12},
@@ -285,6 +298,25 @@ async function doCreate(){
   }finally{ btn.disabled = false; }
 }
 
+async function loadLLM(){
+  try{
+    const st = await api('/api/llm/status');
+    $('llmStatus').innerHTML = st.configured
+      ? `编译引擎：<b style="color:#37d67a">LLM</b> · ${st.model} · ${st.base_url}`
+      : `编译引擎：<b style="color:#f2c14e">规则解析</b>（未配置 LLM_API_KEY）`;
+  }catch(e){ $('llmStatus').textContent = 'LLM 状态获取失败'; }
+}
+
+async function testLLM(){
+  $('llmStatus').innerHTML = '<span class="spinner"></span> 测试中…';
+  try{
+    const r = await api('/api/llm/test', {method:'POST'});
+    $('llmStatus').innerHTML = r.ok
+      ? `编译引擎：<b style="color:#37d67a">LLM 可用</b> · ${r.model} · ${r.latency}s`
+      : `<b style="color:#ff5c7a">LLM 不可用</b>：${r.reason}`;
+  }catch(e){ $('llmStatus').innerHTML = `<b style="color:#ff5c7a">${e.message}</b>`; }
+}
+
 async function loadIndicators(){
   try{
     const m = await api('/api/indicators');
@@ -298,6 +330,7 @@ async function loadIndicators(){
 initChart();
 loadAll();
 loadIndicators();
+loadLLM();
 </script>
 </body>
 </html>
