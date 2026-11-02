@@ -245,21 +245,40 @@ class Market:
         return v
 
     def risk_mask(self) -> np.ndarray:
-        """风险过滤：次新股 / 低价股 / 小市值。结果按参数缓存。"""
-        cfg = (float(os.environ.get('RACE_MIN_LISTED', 120)),
-               float(os.environ.get('RACE_MIN_PRICE', 2.0)),
-               float(os.environ.get('RACE_MIN_FLOAT_MV', 20.0)))
+        """风险过滤：次新股 / 低价股 / 小市值。
+
+        原则：**数据缺失时放行，不误杀**。
+        - 没有 base.dbf（拿不到流通股本/上市日期）时，相应条件自动跳过
+        - 环境变量 RACE_RISK=off 可整体关闭
+        """
         if self._risk is not None:
             return self._risk
-        days, min_px, min_mv = cfg
+        if str(os.environ.get('RACE_RISK', 'on')).lower() in ('off', '0', 'false'):
+            self._risk = np.ones((self.n, self.m), dtype=bool)
+            return self._risk
+
+        days = float(os.environ.get('RACE_MIN_LISTED', 120))
+        min_px = float(os.environ.get('RACE_MIN_PRICE', 2.0))
+        min_mv = float(os.environ.get('RACE_MIN_FLOAT_MV', 20.0))
+
         ok = np.ones((self.n, self.m), dtype=bool)
         idx = np.arange(self.m)[None, :]
-        listed = idx - self.list_idx[:, None]
-        ok &= listed >= days                       # 上市满 N 个交易日
+
+        # 1) 次新股：只有拿到上市日期才过滤
+        has_list = self.list_idx > 0
+        if has_list.any():
+            listed = idx - self.list_idx[:, None]
+            ok &= (~has_list[:, None]) | (listed >= days)
+
         with np.errstate(invalid='ignore'):
-            ok &= self.C >= min_px                 # 低价股
-            mv = self.float_sh[:, None] * self.C / 1e4   # 亿
-            ok &= np.nan_to_num(mv, nan=0.0) >= min_mv   # 小市值
+            # 2) 低价股：价格总是有的
+            ok &= self.C >= min_px
+
+            # 3) 小市值：只有拿到流通股本才过滤
+            has_fs = self.float_sh > 0
+            mv = self.float_sh[:, None] * self.C / 1e4
+            ok &= (~has_fs[:, None]) | (mv >= min_mv)
+
         self._risk = ok
         return ok
 

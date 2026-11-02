@@ -56,6 +56,7 @@ curl http://127.0.0.1:9201/healthz
 | `RACE_MIN_LISTED` | 120 | 上市不足 N 个交易日排除 |
 | `RACE_MIN_PRICE` | 2.0 | 低价股门槛 |
 | `RACE_MIN_FLOAT_MV` | 20 | 流通市值门槛（亿） |
+| `RACE_RISK` | on | 设为 `off` 可整体关闭风险过滤 |
 | `LLM_API_KEY` | 无 | 配置后启用 LLM 编译；不配则走规则解析 |
 
 ## 4. 每日任务
@@ -198,3 +199,29 @@ cd /usr/strategy-racecourse
 
 > 迁移后如果以后又从 zip 重新解压，flat 文件会再次出现 —— 
 > 引擎两种布局都支持，不影响使用。
+
+## 10. 风险过滤与「0 笔交易」排查
+
+风险过滤依赖 `T0002/hq_cache/base.dbf`（提供上市日期、流通股本）。
+**如果只有解压出来的 .day 文件、没有 base.dbf**，过滤器拿不到数据，此时：
+
+- 上市日期 / 流通市值条件**自动跳过**（不误杀）
+- 只保留「价格 ≥ 2 元」这一条
+
+如果回测出现 0 笔，按顺序排查：
+
+```bash
+# 1. 数据是否可用
+curl -s http://127.0.0.1:9201/api/health | python3 -m json.tool
+
+# 重点看：
+#   stocks           是否为 0（数据没加载）
+#   risk.pass_ratio  是否接近 0（过滤器把市场滤空了）
+#   risk.has_float_shares  是否为 0（没有 base.dbf）
+
+# 2. 临时关闭过滤器验证
+RACE_RISK=off ./stop.sh && RACE_RISK=off ./start.sh
+curl -X POST http://127.0.0.1:9201/api/strategies/<id>/backtest
+```
+
+若关闭后恢复正常，说明是过滤条件过严（调低 `RACE_MIN_PRICE` / `RACE_MIN_FLOAT_MV` 即可）。

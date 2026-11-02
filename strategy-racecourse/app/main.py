@@ -75,10 +75,23 @@ def health():
         mk = market()
     except HTTPException as e:
         return dict(status='error', vipdoc=VIPDOC, detail=e.detail)
+    # 风险过滤状态（数据缺失时过滤器会自动放行）
+    try:
+        risk_pass = float(mk.risk_mask().mean())
+    except Exception:
+        risk_pass = None
+    risk_info = dict(
+        enabled=str(os.environ.get('RACE_RISK', 'on')).lower() not in ('off', '0', 'false'),
+        has_float_shares=int((mk.float_sh > 0).sum()),
+        has_list_date=int((mk.list_idx > 0).sum()),
+        pass_ratio=risk_pass,
+    )
     return dict(
         status='ok',
         vipdoc=VIPDOC,
         vipdoc_resolved=str(mk.vipdoc),
+        layout='flat' if getattr(mk, 'flat', False) else 'nested',
+        risk=risk_info,
         stocks=mk.n,
         days=mk.m,
         first_date=int(mk.dates[0]),
