@@ -108,3 +108,93 @@ TDX_VIPDOC=/data/vipdoc RACE_DATA=/data/racecourse \
 | `/healthz` 200 但 `/api/health` 慢 | 正常，首次加载矩阵需 10-30 秒 |
 | 编译报 422 | 看 `items` 字段，说明用了不支持的指标 |
 | 全市场无信号 | 数据未更新，或 `RACE_MIN_*` 过严 |
+| `FileNotFoundError: .../sh/lday/sh000001.day` | **TDX_VIPDOC 指错** | 见下方说明 |
+| 回测返回 503 | 数据路径无效 | `curl /api/health` 看 `detail` 里尝试过的路径 |
+
+### TDX_VIPDOC 指错的典型情况
+
+`TDX_VIPDOC` 应该指向**含 `sh/lday/` 的目录**，即 `vipdoc` 本身，不是 TDX 根目录。
+
+```
+✅ /usr/stock-data-processor/new_tdx/vipdoc
+❌ /usr/stock-data-processor/new_tdx          ← 少一层 vipdoc
+```
+
+从 v1.1 起代码会**自动探测** `p`、`p/vipdoc`、`p.parent/vipdoc`、`p.parent` 四个候选，
+所以即使配成根目录也能跑。排查时看 `/api/health` 的 `vipdoc_resolved` 字段确认实际用的路径。
+
+## 8. 前端
+
+前端随代码一起发布，**不需要单独的构建或部署步骤**：
+
+- 页面：`web/index.html`，由 FastAPI 的 `/` 路由返回
+- 依赖：`web/lib/echarts.min.js`（1 MB，已本地化）
+- 访问：`http://<host>:9201/`
+
+### 可选：用 nginx 提供域名与 HTTPS
+
+如果想让前端走独立域名，在 nginx 里反代即可（后端仍然只有 9201）：
+
+```nginx
+server {
+    listen 80;
+    server_name race.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:9201;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 300s;      # 全市场回测可能较慢
+    }
+
+    gzip on;
+    gzip_types text/css application/javascript application/json;
+}
+```
+
+注意：`proxy_read_timeout` 要放大，首次加载全市场矩阵和跑回测都可能超过 60 秒。
+
+## 9. 特殊情况：文件名里含反斜杠（flat 布局）
+
+从 Windows zip 解压到 Linux 时，若解压工具没转换分隔符，会得到：
+
+```
+-rw-r--r-- 1 root root 138528 'sz\lday\sz399990.day'
+```
+
+注意：**反斜杠是文件名的一部分**，不是目录分隔符。这时 `sz/lday/` 目录根本不存在。
+
+### 诊断
+
+```bash
+cd /usr/strategy-racecourse
+.venv/bin/python -m app.check /usr/stock-data-processor/new_tdx
+```
+
+输出会显示 `布局: flat（文件名含反斜杠）`。
+
+### 方案一：让程序直接兼容（无需改数据）
+
+引擎已支持 flat 布局，`detect_layout()` 会自动识别并直接读取，
+不需要任何手动操作。启动后 `/api/health` 里的 `vipdoc_resolved` 会显示实际目录。
+
+### 方案二：一次性迁移成标准目录（推荐）
+
+```bash
+cd /usr/strategy-racecourse
+
+# 先看会怎么改
+.venv/bin/python -m app.flatten --root /usr/stock-data-processor/new_tdx --dry-run
+
+# 确认后执行
+.venv/bin/python -m app.flatten --root /usr/stock-data-processor/new_tdx
+
+# 再次验证
+.venv/bin/python -m app.check /usr/stock-data-processor/new_tdx
+```
+
+迁移会把 `sh\lday\sh600000.day` 移动成 `sh/lday/sh600000.day`，
+目标已存在时跳过不覆盖，失败会报告并中止。
+
+> 迁移后如果以后又从 zip 重新解压，flat 文件会再次出现 —— 
+> 引擎两种布局都支持，不影响使用。

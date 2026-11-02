@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """文件存储：策略目录 + JSON，原子写，无数据库。"""
 from __future__ import annotations
 

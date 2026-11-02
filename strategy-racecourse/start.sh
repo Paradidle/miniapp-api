@@ -18,6 +18,13 @@ export PORT
 export TDX_VIPDOC="${TDX_VIPDOC:-/data/vipdoc}"
 export RACE_DATA="${RACE_DATA:-$APP_DIR/data}"
 
+# 数据目录自检（运行时也会自动探测，这里只做提示）
+if [ ! -f "$TDX_VIPDOC/sh/lday/sh000001.day" ] && \
+   [ ! -f "$TDX_VIPDOC/vipdoc/sh/lday/sh000001.day" ]; then
+    echo "[警告] TDX_VIPDOC=$TDX_VIPDOC 下未找到 sh/lday/sh000001.day"
+    echo "       服务仍会启动（运行时自动向上/向下探测 vipdoc），但请确认数据路径。"
+fi
+
 # 已在运行则不重复启动
 if [ -f "$PID_FILE" ]; then
     pid="$(cat "$PID_FILE")"

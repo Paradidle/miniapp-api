@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """FastAPI 入口：策略管理 + 赛马图数据 + 回测/每日任务。"""
 from __future__ import annotations
 
@@ -25,11 +25,19 @@ _market: Market | None = None
 
 
 def market() -> Market:
-    """首次调用时加载全市场矩阵（约 2-5 秒）"""
+    """首次调用时加载全市场矩阵（约 2-5 秒）。
+
+    数据缺失时抛 503 而不是 500，并带上排查提示。
+    """
     global _market
     if _market is None:
         limit = os.environ.get('RACE_LIMIT')
-        _market = Market(VIPDOC, limit=int(limit) if limit else None)
+        try:
+            _market = Market(VIPDOC, limit=int(limit) if limit else None)
+        except FileNotFoundError as e:
+            raise HTTPException(503, detail=str(e))
+        except Exception as e:
+            raise HTTPException(503, detail=f'加载行情数据失败: {type(e).__name__}: {e}')
     return _market
 
 
@@ -63,10 +71,14 @@ def healthz():
 
 @app.get('/api/health')
 def health():
-    mk = market()
+    try:
+        mk = market()
+    except HTTPException as e:
+        return dict(status='error', vipdoc=VIPDOC, detail=e.detail)
     return dict(
         status='ok',
         vipdoc=VIPDOC,
+        vipdoc_resolved=str(mk.vipdoc),
         stocks=mk.n,
         days=mk.m,
         first_date=int(mk.dates[0]),

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """数据引擎：读 .day、构建矩阵、计算指标、执行 DSL 信号、回测/前向。"""
 from __future__ import annotations
 
@@ -25,6 +25,50 @@ UNIVERSE = (('sh', ('600', '601', '603', '605')),
 COST = 0.00025 * 2 + 0.0005 + 0.001
 
 
+# flat 布局：文件名本身含反斜杠（Windows zip 解压到 Linux 的典型产物）
+FLAT_PROBE = 'sh\\lday\\sh000001.day'
+
+
+def resolve_vipdoc(p: str | Path) -> Path:
+    """兼容两种布局，返回数据目录（不含是否 flat 的信息，供旧调用方使用）"""
+    return detect_layout(p)[0]
+
+
+def detect_layout(p: str | Path):
+    """探测数据布局。
+
+    返回 (目录, is_flat)：
+        is_flat=False  标准嵌套：<dir>/sh/lday/sh000001.day
+        is_flat=True   扁平：<dir>/'sh\\lday\\sh000001.day'（反斜杠是文件名的一部分）
+    """
+    p = Path(p)
+    cands = [p, p / 'vipdoc', p.parent / 'vipdoc', p.parent]
+    nested, flat = [], []
+    for c in cands:
+        try:
+            if (c / 'sh' / 'lday' / 'sh000001.day').exists():
+                return c, False
+            nested.append(str(c))
+            if (c / FLAT_PROBE).exists():
+                return c, True
+            # 探测文件缺失时，扫描是否存在任何 'xx\\lday\\*.day'
+            try:
+                if any('\\lday\\' in f.name and f.name.endswith('.day')
+                       for f in c.iterdir()):
+                    return c, True
+            except OSError:
+                pass
+            flat.append(str(c / FLAT_PROBE))
+        except OSError:
+            continue
+    raise FileNotFoundError(
+        '找不到通达信日线数据，已尝试：\n'
+        + '  嵌套布局:\n    - ' + '\n    - '.join(nested)
+        + '\n  扁平布局:\n    - ' + '\n    - '.join(flat)
+        + '\n请检查环境变量 TDX_VIPDOC。'
+    )
+
+
 def read_day(path: str | Path) -> np.ndarray:
     raw = Path(path).read_bytes()
     if len(raw) % REC_SIZE:
@@ -32,8 +76,38 @@ def read_day(path: str | Path) -> np.ndarray:
     return np.frombuffer(raw, dtype=DT)
 
 
-def list_codes(vipdoc: Path):
+def flat_pairs(vipdoc: Path):
+    """扫描 flat 布局目录，返回 [(code, 原始文件名)]。
+
+    文件名形如 'sh\\lday\\sh600000.day'（反斜杠是文件名的一部分）。
+    这是纯函数，便于单元测试。
+    """
     out = []
+    try:
+        entries = sorted(vipdoc.iterdir(), key=lambda f: f.name)
+    except OSError:
+        return out
+    for f in entries:
+        name = f.name
+        if '\\' not in name or not name.endswith('.day'):
+            continue
+        parts = name.split('\\')
+        if len(parts) != 3 or parts[1] != 'lday':
+            continue
+        mk, code = parts[0], parts[2][:-4]
+        for m, prefixes in UNIVERSE:
+            if mk == m and code[:2] == mk and code[2:5] in prefixes:
+                out.append((code, name))
+                break
+    return out
+
+
+def list_codes(vipdoc: Path, flat: bool = False):
+    out = []
+    if flat:
+        for code, name in flat_pairs(vipdoc):
+            out.append((code, vipdoc / name))
+        return out
     for mk, prefixes in UNIVERSE:
         d = vipdoc / mk / 'lday'
         if not d.is_dir():
@@ -51,14 +125,16 @@ class Market:
     """全市场矩阵。一次加载，常驻内存。"""
 
     def __init__(self, vipdoc: str | Path, limit: int | None = None):
-        self.vipdoc = Path(vipdoc)
-        idx = read_day(self.vipdoc / 'sh' / 'lday' / 'sh000001.day')
+        self.vipdoc, self.flat = detect_layout(vipdoc)
+        idx_path = (self.vipdoc / FLAT_PROBE) if self.flat \
+            else (self.vipdoc / 'sh' / 'lday' / 'sh000001.day')
+        idx = read_day(idx_path)
         idx = idx[idx['date'] > 0]
         idx = idx[np.argsort(idx['date'])]
         self.dates = idx['date'].astype(np.int64)
         m = len(self.dates)
 
-        files = list_codes(self.vipdoc)
+        files = list_codes(self.vipdoc, self.flat)
         if limit:
             files = files[:limit]
         n = len(files)

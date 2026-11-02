@@ -2,35 +2,50 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>策略赛马场</title>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
-  :root { --bg:#0f1420; --panel:#171e2e; --line:#26304a; --text:#e6ecf7; --muted:#8b9bb4;
-          --gold:#f2c14e; --green:#37d67a; --red:#ff5c7a; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--text);
-         font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
-  header { padding:20px 28px; border-bottom:1px solid var(--line); display:flex;
-           align-items:baseline; gap:14px; }
-  header h1 { margin:0; font-size:20px; letter-spacing:1px; }
-  header .meta { color:var(--muted); font-size:13px; }
-  .wrap { display:grid; grid-template-columns: 1fr 380px; gap:18px; padding:18px 28px; }
-  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; }
-  #chart { width:100%; height:calc(100vh - 160px); min-height:420px; }
-  .detail h3 { margin:0 0 10px; font-size:15px; }
-  .kv { display:flex; justify-content:space-between; padding:5px 0;
-        border-bottom:1px dashed var(--line); font-size:13px; }
-  .kv span:last-child { color:var(--gold); font-variant-numeric: tabular-nums; }
-  .muted { color:var(--muted); font-size:12px; line-height:1.7; }
-  .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px;
-           background:#222c42; color:var(--muted); margin-left:6px; }
-  textarea { width:100%; height:130px; background:#0d1320; color:var(--text);
-             border:1px solid var(--line); border-radius:8px; padding:10px;
-             font-family: ui-monospace, Consolas, monospace; font-size:12px; }
-  button { margin-top:8px; padding:8px 16px; border-radius:8px; border:1px solid var(--line);
-           background:var(--gold); color:#1a1206; font-weight:700; cursor:pointer; }
-  button.ghost { background:#222c42; color:var(--text); font-weight:400; }
-  button:hover { filter:brightness(1.08); }
+  :root{--bg:#0f1420;--panel:#171e2e;--line:#26304a;--text:#e6ecf7;--muted:#8b9bb4;
+        --gold:#f2c14e;--green:#37d67a;--red:#ff5c7a;--blue:#5b8cff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  header{padding:18px 26px;border-bottom:1px solid var(--line);display:flex;
+         align-items:baseline;gap:14px;flex-wrap:wrap}
+  header h1{margin:0;font-size:20px;letter-spacing:.5px}
+  .meta{color:var(--muted);font-size:13px}
+  .wrap{display:grid;grid-template-columns:1fr 420px;gap:16px;padding:16px 26px}
+  @media(max-width:1200px){.wrap{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  #chart{width:100%;height:calc(100vh - 190px);min-height:420px}
+  h3{margin:0 0 12px;font-size:15px}
+  .kv{display:flex;justify-content:space-between;padding:6px 0;
+      border-bottom:1px dashed var(--line);font-size:13px}
+  .kv span:last-child{color:var(--gold);font-variant-numeric:tabular-nums}
+  .muted{color:var(--muted);font-size:12px;line-height:1.7}
+  textarea,input{width:100%;background:#0d1320;color:var(--text);
+        border:1px solid var(--line);border-radius:8px;padding:10px;font-size:13px;
+        font-family:inherit}
+  textarea{height:92px;resize:vertical}
+  textarea.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;height:150px}
+  button{margin-top:10px;padding:9px 16px;border-radius:8px;border:1px solid var(--line);
+         background:var(--gold);color:#1a1206;font-weight:700;cursor:pointer;font-size:13px}
+  button.ghost{background:#222c42;color:var(--text);font-weight:400}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button:hover:not(:disabled){filter:brightness(1.08)}
+  .tabs{display:flex;gap:8px;margin-bottom:10px}
+  .tab{padding:6px 12px;border-radius:8px;background:#222c42;color:var(--muted);
+       font-size:13px;cursor:pointer;border:1px solid transparent}
+  .tab.on{background:var(--gold);color:#1a1206;font-weight:700}
+  .hint{background:#101a2e;border:1px solid var(--line);border-radius:8px;
+        padding:10px;margin-top:10px;font-size:12px;line-height:1.8;color:var(--muted)}
+  .err{background:#2a1220;border-color:var(--red);color:#ffb3c1}
+  .ok{background:#0f2418;border-color:var(--green)}
+  .tag{display:inline-block;padding:2px 7px;border-radius:999px;background:#222c42;
+       color:var(--muted);font-size:11px;margin:2px 4px 2px 0}
+  .spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--line);
+           border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -43,148 +58,246 @@
   <div class="panel"><div id="chart"></div></div>
 
   <div>
-    <div class="panel detail" id="detail" style="margin-bottom:16px">
+    <div class="panel" id="detailPanel" style="margin-bottom:16px">
       <h3>策略详情</h3>
       <div class="muted">点击左侧条形查看</div>
     </div>
 
     <div class="panel">
-      <h3 style="margin:0 0 8px;font-size:15px">新建策略（DSL）</h3>
-      <div class="muted" style="margin-bottom:8px">
-        支持指标：ret / ma / close_to_ma / vol_ratio / amount_ratio /
-        high_n / low_n / breakout / box_position / shadow_up / shadow_down / amplitude
+      <h3>新建策略</h3>
+      <div class="tabs">
+        <div class="tab on" data-mode="nl" onclick="switchMode('nl')">自然语言</div>
+        <div class="tab" data-mode="dsl" onclick="switchMode('dsl')">DSL</div>
       </div>
-      <input id="sname" placeholder="策略名" style="width:100%;padding:8px;margin-bottom:8px;
-             background:#0d1320;color:var(--text);border:1px solid var(--line);border-radius:8px">
-      <textarea id="dsl">{
+
+      <div id="modeNL">
+        <textarea id="nlText" placeholder="例：箱体位置低于20%且放量1.5倍时买入，止盈15%止损12%，持有20天"></textarea>
+        <div id="indList" class="hint" style="margin-top:8px"></div>
+      </div>
+
+      <div id="modeDSL" style="display:none">
+        <textarea id="dslText" class="mono">{
   "signal": [
     {"ind": "box_position", "window": 120, "op": "<=", "value": 0.2},
-    {"ind": "vol_ratio", "window": 7, "op": ">=", "value": 1.5}
+    {"ind": "shadow_down", "op": ">=", "value": 0.02}
   ],
-  "rank_by": {"ind": "vol_ratio", "window": 7},
+  "rank_by": {"ind": "shadow_down"},
   "entry": {"max_per_day": 1},
-  "exit": {"take_profit": 0.05, "stop_loss": 0.12, "max_hold_days": 30}
+  "exit": {"take_profit": 0.15, "stop_loss": 0.12, "max_hold_days": 20}
 }</textarea>
-      <button onclick="createStrategy()">创建并回测</button>
-      <button class="ghost" onclick="runDaily()">跑一次前向</button>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button id="btnCompile" onclick="doCompile()">编译预览</button>
+        <button id="btnCreate" class="ghost" onclick="doCreate()">创建并回测</button>
+      </div>
+      <div id="result"></div>
     </div>
   </div>
 </div>
 
+<script src="/static/lib/echarts.min.js"></script>
 <script>
-const chart = echarts.init(document.getElementById('chart'), null, {renderer:'canvas'});
-let rows = [];
+/* CDN 兜底：本地文件缺失时才加载远程 */
+if (typeof echarts === 'undefined') {
+  document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"><\/script>');
+}
+</script>
+<script>
+const $ = id => document.getElementById(id);
+let rows = [], mode = 'nl', chart;
 
-function fmtPct(x){ return (x*100).toFixed(2) + '%'; }
+function initChart(){
+  chart = echarts.init($('chart'), null, {renderer:'canvas'});
+  chart.on('click', p => p.data && p.data.id && showDetail(p.data.id));
+  window.addEventListener('resize', () => chart.resize());
+}
 
-async function loadRanking(){
-  const [h, r] = await Promise.all([
-    fetch('/api/health').then(x=>x.json()),
-    fetch('/api/ranking').then(x=>x.json())
-  ]);
-  document.getElementById('meta').innerHTML =
-    `${h.stocks} 只 · ${h.first_date}~${h.last_date} · 服务时间 ${h.server_time}`;
-  rows = r.rows || [];
-  render();
+async function api(path, opt){
+  const r = await fetch(path, opt);
+  const body = await r.json().catch(()=>({}));
+  if (!r.ok) {
+    const d = body.detail || body;
+    const items = (d && d.items) ? d.items.join('；') : (d && d.message) || JSON.stringify(d);
+    throw new Error(items);
+  }
+  return body;
+}
+
+async function loadAll(){
+  try{
+    const [h, rk] = await Promise.all([api('/api/health'), api('/api/ranking')]);
+    $('meta').textContent =
+      `${h.stocks} 只 · ${h.first_date}~${h.last_date} · 服务 ${h.server_time}`;
+    rows = rk.rows || [];
+    render();
+  }catch(e){
+    $('meta').textContent = '接口异常：' + e.message;
+  }
 }
 
 function render(){
   if(!rows.length){
-    chart.setOption({
-      title:{ text:'还没有策略', subtext:'右侧新建一个试试',
-              left:'center', top:'40%',
-              textStyle:{color:'#e6ecf7',fontSize:18},
-              subtextStyle:{color:'#8b9bb4'} }
-    }, true);
+    chart.setOption({title:{text:'还没有策略', subtext:'右侧用自然语言新建一个',
+      left:'center', top:'38%', textStyle:{color:'#e6ecf7',fontSize:18},
+      subtextStyle:{color:'#8b9bb4',fontSize:13}}}, true);
     return;
   }
-  const names = rows.map(x=>x.name);
-  const data = rows.map(x=>({
-    value: +(x.live_avg*100).toFixed(2),
-    win: x.live_win_rate*100,
-    avg: x.live_avg*100,
-    n: x.live_trades,
-    id: x.id,
-    itemStyle:{
-      color: x.live_trades === 0 ? '#2c3752'
-           : x.live_avg > 0.003 ? '#37d67a'
-           : x.live_avg > 0 ? '#f2c14e'
-           : '#ff5c7a',
-      borderRadius:[0,6,6,0]
-    }
-  }));
+  const names = rows.map(r => r.name);
+  const data = rows.map(r => {
+    const useLive = r.live_trades >= 10;
+    const v = (useLive ? r.live_avg : r.bt_avg) * 100;
+    return {
+      value: +v.toFixed(3), id: r.id,
+      win: (useLive ? r.live_win_rate : r.bt_win_rate) * 100,
+      n: useLive ? r.live_trades : r.bt_trades,
+      pf: r.bt_pf || 0, src: useLive ? '前向' : '回测',
+      itemStyle: {
+        borderRadius: [0,6,6,0],
+        color: v > 0.001 ? '#37d67a' : (v > 0 ? '#f2c14e' : '#ff5c7a')
+      }
+    };
+  });
   chart.setOption({
-    grid:{ left:150, right:90, top:20, bottom:30 },
-    tooltip:{ trigger:'item',
-      formatter: p => `<b>${p.name}</b><br/>
-        平均每笔 ${p.data.avg.toFixed(2)}%<br/>胜率 ${p.data.win.toFixed(1)}%<br/>
-        笔数 ${p.data.n}` },
-    xAxis:{ type:'value', axisLabel:{ formatter:v=>v+'%', color:'#8b9bb4' },
-            splitLine:{ lineStyle:{ color:'#1d2740' } } },
-    yAxis:{ type:'category', data:names, inverse:true,
-            axisLabel:{ color:'#c9d4e6', fontSize:12 },
-            axisLine:{ lineStyle:{ color:'#26304a' } } },
-    series:[{
-      type:'bar', barWidth:'58%', data,
-      label:{ show:true, position:'right',
-              formatter:p=>`${p.value}%`, color:'#e6ecf7', fontSize:12 },
-      animationDuration: 900, animationEasing:'cubicOut'
-    }]
+    grid:{left:170, right:130, top:24, bottom:34},
+    tooltip:{trigger:'item', formatter: p => {
+      const d = p.data;
+      return `<b>${p.name}</b><br/>${d.src}平均每笔 ${p.value.toFixed(2)}%<br/>`
+           + `胜率 ${d.win.toFixed(1)}%<br/>${d.n} 笔 · PF ${d.pf.toFixed(2)}`;
+    }},
+    xAxis:{type:'value', axisLabel:{formatter:v=>v+'%', color:'#8b9bb4'},
+           splitLine:{lineStyle:{color:'#1d2740'}}},
+    yAxis:{type:'category', data:names, inverse:true,
+           axisLabel:{color:'#c9d4e6', fontSize:12},
+           axisLine:{lineStyle:{color:'#26304a'}}},
+    series:[{type:'bar', barWidth:'56%', data,
+             label:{show:true, position:'right', color:'#e6ecf7', fontSize:12,
+                    formatter: p => p.value.toFixed(2) + '%'},
+             animationDuration:900, animationEasing:'cubicOut'}]
   }, true);
 }
 
-chart.on('click', p => showDetail(p.data.id));
+const pct = v => ((v||0) * 100).toFixed(2) + '%';
 
 async function showDetail(id){
-  const d = await fetch('/api/strategies/'+id).then(x=>x.json());
-  const live = d.live||{}, bt = d.backtest||{};
-  const dev = (bt.win_rate && live.win_rate)
-    ? ((live.win_rate - bt.win_rate)*100).toFixed(1)+'pp' : '—';
-  document.getElementById('detail').innerHTML = `
-    <h3>${d.name}</h3>
-    <div class="kv"><span>前向平均每笔</span><span>${fmtPct(live.avg_return||0)}</span></div>
-    <div class="kv"><span>前向胜率</span><span>${fmtPct(live.win_rate||0)}</span></div>
-    <div class="kv"><span>前向笔数</span><span>${live.trades||0}</span></div>
-    <div style="margin:14px 0 6px;color:#8b9bb4;font-size:12px">
-      — 以下为历史回测，仅供参考 —</div>
-    <div class="kv"><span>回测平均每笔</span><span>${fmtPct(bt.avg_return||0)}</span></div>
-    <div class="kv"><span>回测胜率</span><span>${fmtPct(bt.win_rate||0)}</span></div>
-    <div class="kv"><span>回测笔数</span><span>${bt.trades||0}</span></div>
-    <div class="kv"><span>盈亏比</span><span>${(bt.profit_factor||0).toFixed(2)}</span></div>
-    <div class="kv"><span>最大单笔亏损</span><span>${fmtPct(bt.max_loss||0)}</span></div>
-    <div class="kv"><span>前向/回测背离</span><span>${dev}</span></div>
-    <button class="ghost" onclick="loadTrades('${id}','backtest')">加载回测明细</button>
-    <div id="trades" class="muted" style="margin-top:8px"></div>`;
+  try{
+    const d = await api('/api/strategies/' + id);
+    const live = d.live || {}, bt = d.backtest || {};
+    const dev = (bt.win_rate && live.win_rate)
+      ? ((live.win_rate - bt.win_rate) * 100).toFixed(1) + 'pp' : '—';
+    $('detailPanel').innerHTML = `
+      <h3>${d.name}</h3>
+      <div class="muted" style="margin-bottom:10px">${d.interpreted_cn || ''}</div>
+      <div class="kv"><span>前向平均每笔</span><span>${pct(live.avg_return)}</span></div>
+      <div class="kv"><span>前向胜率 / 笔数</span><span>${pct(live.win_rate)} / ${live.trades||0}</span></div>
+      <div style="margin:12px 0 6px;color:#8b9bb4;font-size:12px">— 历史回测（仅参考）—</div>
+      <div class="kv"><span>回测平均每笔</span><span>${pct(bt.avg_return)}</span></div>
+      <div class="kv"><span>回测胜率 / 笔数</span><span>${pct(bt.win_rate)} / ${bt.trades||0}</span></div>
+      <div class="kv"><span>盈亏比</span><span>${(bt.profit_factor||0).toFixed(2)}</span></div>
+      <div class="kv"><span>最大单笔亏损</span><span>${pct(bt.max_loss)}</span></div>
+      <div class="kv"><span>前向/回测背离</span><span>${dev}</span></div>
+      <button class="ghost" onclick="loadTrades('${id}')">加载回测明细</button>
+      <div id="trades" class="muted" style="margin-top:10px"></div>`;
+  }catch(e){ $('detailPanel').innerHTML = `<div class="hint err">${e.message}</div>`; }
 }
 
-async function loadTrades(id, kind){
-  const r = await fetch(`/api/strategies/${id}/trades?kind=${kind}&page=1&size=8`).then(x=>x.json());
-  document.getElementById('trades').innerHTML =
-    `共 ${r.total} 笔，前 8 笔：<br/>` +
-    r.items.map(t=>`${t.code} ${t.entry_date}→${t.exit_date} ${(t.ret*100).toFixed(2)}%`).join('<br/>');
+async function loadTrades(id){
+  try{
+    const r = await api(`/api/strategies/${id}/trades?kind=backtest&page=1&size=8`);
+    $('trades').innerHTML = `共 ${r.total} 笔，前 8 笔：<br/>` + r.items.map(t =>
+      `${t.code} ${t.entry_date}→${t.exit_date} <span style="color:${t.ret>0?'#37d67a':'#ff5c7a'}">`
+      + `${(t.ret*100).toFixed(2)}%</span> ${t.reason}`).join('<br/>');
+  }catch(e){ $('trades').textContent = e.message; }
 }
 
-async function createStrategy(){
-  const name = document.getElementById('sname').value || ('策略' + Date.now()%10000);
-  let dsl;
-  try { dsl = JSON.parse(document.getElementById('dsl').value); }
-  catch(e){ alert('DSL 不是合法 JSON'); return; }
-  const s = await fetch('/api/strategies', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({name, raw_text:'', interpreted_cn:'', dsl})
-  }).then(x=>x.json());
-  const bt = await fetch(`/api/strategies/${s.id}/backtest`, {method:'POST'}).then(x=>x.json());
-  alert(`回测完成：${bt.metrics.trades} 笔，胜率 ${(bt.metrics.win_rate*100).toFixed(1)}%`);
-  loadRanking();
+function switchMode(m){
+  mode = m;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.mode === m));
+  $('modeNL').style.display = m === 'nl' ? '' : 'none';
+  $('modeDSL').style.display = m === 'dsl' ? '' : 'none';
 }
 
-async function runDaily(){
-  const r = await fetch('/api/admin/run-daily', {method:'POST'}).then(x=>x.json());
-  alert(`最新交易日 ${r.date}，产生 ${r.results.length} 条策略信号`);
+function payload(){
+  if(mode === 'dsl'){
+    let dsl;
+    try{ dsl = JSON.parse($('dslText').value); }
+    catch(e){ throw new Error('DSL 不是合法 JSON：' + e.message); }
+    return {dsl, text: ''};
+  }
+  const text = $('nlText').value.trim();
+  if(!text) throw new Error('请先输入策略描述');
+  return {text};
 }
 
-loadRanking();
-window.addEventListener('resize', ()=>chart.resize());
+async function doCompile(){
+  const out = $('result');
+  try{
+    out.innerHTML = '<div class="hint"><span class="spinner"></span> 编译中…</div>';
+    const p = payload();
+    if(mode === 'dsl'){
+      out.innerHTML = '<div class="hint ok">DSL 语法正确</div>';
+      return;
+    }
+    const r = await api('/api/strategies/compile', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({text: p.text, run_backtest: false})
+    });
+    out.innerHTML = `<div class="hint ok"><b>${r.name}</b>（${r.source}）<br/>`
+      + `${r.interpreted_cn}</div>`;
+  }catch(e){
+    out.innerHTML = `<div class="hint err">${e.message}</div>`;
+  }
+}
+
+async function doCreate(){
+  const out = $('result');
+  const btn = $('btnCreate');
+  try{
+    btn.disabled = true;
+    out.innerHTML = '<div class="hint"><span class="spinner"></span> 回测中…</div>';
+    let msg;
+    if(mode === 'dsl'){
+      const p = payload();
+      const s = await api('/api/strategies', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({name:'DSL策略' + (Date.now()%1000), raw_text:'',
+                              interpreted_cn:'手动编写', dsl:p.dsl})
+      });
+      const r = await api(`/api/strategies/${s.id}/backtest`, {method:'POST'});
+      const m = r.metrics;
+      msg = `回测完成：${m.trades} 笔，胜率 ${(m.win_rate*100).toFixed(1)}%，`
+          + `平均每笔 ${(m.avg_return*100).toFixed(2)}%`;
+    }else{
+      const p = payload();
+      const r = await api('/api/strategies/from-text', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({text: p.text, run_backtest: true})
+      });
+      const m = r.metrics || {};
+      msg = `<b>${r.meta.name}</b> 创建成功<br/>${r.meta.interpreted_cn}<br/>`
+          + `回测：${m.trades} 笔，胜率 ${(m.win_rate*100).toFixed(1)}%，`
+          + `平均每笔 ${(m.avg_return*100).toFixed(2)}%`;
+    }
+    out.innerHTML = `<div class="hint ok">${msg}</div>`;
+    await loadAll();
+  }catch(e){
+    out.innerHTML = `<div class="hint err">${e.message}</div>`;
+  }finally{ btn.disabled = false; }
+}
+
+async function loadIndicators(){
+  try{
+    const m = await api('/api/indicators');
+    const tags = Object.entries(m)
+      .map(([k,v]) => `<span class="tag" title="${v}">${k}</span>`).join('');
+    $('indList').innerHTML = '支持指标：' + tags
+      + '<br/>不支持：换手率、市值、财务指标、北向资金、龙虎榜、分钟级数据';
+  }catch(e){}
+}
+
+initChart();
+loadAll();
+loadIndicators();
 </script>
 </body>
 </html>
