@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>策略赛马场</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  :root { --bg:#0f1420; --panel:#171e2e; --line:#26304a; --text:#e6ecf7; --muted:#8b9bb4;
+          --gold:#f2c14e; --green:#37d67a; --red:#ff5c7a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  header { padding:20px 28px; border-bottom:1px solid var(--line); display:flex;
+           align-items:baseline; gap:14px; }
+  header h1 { margin:0; font-size:20px; letter-spacing:1px; }
+  header .meta { color:var(--muted); font-size:13px; }
+  .wrap { display:grid; grid-template-columns: 1fr 380px; gap:18px; padding:18px 28px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  #chart { width:100%; height:calc(100vh - 160px); min-height:420px; }
+  .detail h3 { margin:0 0 10px; font-size:15px; }
+  .kv { display:flex; justify-content:space-between; padding:5px 0;
+        border-bottom:1px dashed var(--line); font-size:13px; }
+  .kv span:last-child { color:var(--gold); font-variant-numeric: tabular-nums; }
+  .muted { color:var(--muted); font-size:12px; line-height:1.7; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px;
+           background:#222c42; color:var(--muted); margin-left:6px; }
+  textarea { width:100%; height:130px; background:#0d1320; color:var(--text);
+             border:1px solid var(--line); border-radius:8px; padding:10px;
+             font-family: ui-monospace, Consolas, monospace; font-size:12px; }
+  button { margin-top:8px; padding:8px 16px; border-radius:8px; border:1px solid var(--line);
+           background:var(--gold); color:#1a1206; font-weight:700; cursor:pointer; }
+  button.ghost { background:#222c42; color:var(--text); font-weight:400; }
+  button:hover { filter:brightness(1.08); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏇 策略赛马场</h1>
+  <span class="meta" id="meta">加载中…</span>
+</header>
+
+<div class="wrap">
+  <div class="panel"><div id="chart"></div></div>
+
+  <div>
+    <div class="panel detail" id="detail" style="margin-bottom:16px">
+      <h3>策略详情</h3>
+      <div class="muted">点击左侧条形查看</div>
+    </div>
+
+    <div class="panel">
+      <h3 style="margin:0 0 8px;font-size:15px">新建策略（DSL）</h3>
+      <div class="muted" style="margin-bottom:8px">
+        支持指标：ret / ma / close_to_ma / vol_ratio / amount_ratio /
+        high_n / low_n / breakout / box_position / shadow_up / shadow_down / amplitude
+      </div>
+      <input id="sname" placeholder="策略名" style="width:100%;padding:8px;margin-bottom:8px;
+             background:#0d1320;color:var(--text);border:1px solid var(--line);border-radius:8px">
+      <textarea id="dsl">{
+  "signal": [
+    {"ind": "box_position", "window": 120, "op": "<=", "value": 0.2},
+    {"ind": "vol_ratio", "window": 7, "op": ">=", "value": 1.5}
+  ],
+  "rank_by": {"ind": "vol_ratio", "window": 7},
+  "entry": {"max_per_day": 1},
+  "exit": {"take_profit": 0.05, "stop_loss": 0.12, "max_hold_days": 30}
+}</textarea>
+      <button onclick="createStrategy()">创建并回测</button>
+      <button class="ghost" onclick="runDaily()">跑一次前向</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const chart = echarts.init(document.getElementById('chart'), null, {renderer:'canvas'});
+let rows = [];
+
+function fmtPct(x){ return (x*100).toFixed(2) + '%'; }
+
+async function loadRanking(){
+  const [h, r] = await Promise.all([
+    fetch('/api/health').then(x=>x.json()),
+    fetch('/api/ranking').then(x=>x.json())
+  ]);
+  document.getElementById('meta').innerHTML =
+    `${h.stocks} 只 · ${h.first_date}~${h.last_date} · 服务时间 ${h.server_time}`;
+  rows = r.rows || [];
+  render();
+}
+
+function render(){
+  if(!rows.length){
+    chart.setOption({
+      title:{ text:'还没有策略', subtext:'右侧新建一个试试',
+              left:'center', top:'40%',
+              textStyle:{color:'#e6ecf7',fontSize:18},
+              subtextStyle:{color:'#8b9bb4'} }
+    }, true);
+    return;
+  }
+  const names = rows.map(x=>x.name);
+  const data = rows.map(x=>({
+    value: +(x.live_avg*100).toFixed(2),
+    win: x.live_win_rate*100,
+    avg: x.live_avg*100,
+    n: x.live_trades,
+    id: x.id,
+    itemStyle:{
+      color: x.live_trades === 0 ? '#2c3752'
+           : x.live_avg > 0.003 ? '#37d67a'
+           : x.live_avg > 0 ? '#f2c14e'
+           : '#ff5c7a',
+      borderRadius:[0,6,6,0]
+    }
+  }));
+  chart.setOption({
+    grid:{ left:150, right:90, top:20, bottom:30 },
+    tooltip:{ trigger:'item',
+      formatter: p => `<b>${p.name}</b><br/>
+        平均每笔 ${p.data.avg.toFixed(2)}%<br/>胜率 ${p.data.win.toFixed(1)}%<br/>
+        笔数 ${p.data.n}` },
+    xAxis:{ type:'value', axisLabel:{ formatter:v=>v+'%', color:'#8b9bb4' },
+            splitLine:{ lineStyle:{ color:'#1d2740' } } },
+    yAxis:{ type:'category', data:names, inverse:true,
+            axisLabel:{ color:'#c9d4e6', fontSize:12 },
+            axisLine:{ lineStyle:{ color:'#26304a' } } },
+    series:[{
+      type:'bar', barWidth:'58%', data,
+      label:{ show:true, position:'right',
+              formatter:p=>`${p.value}%`, color:'#e6ecf7', fontSize:12 },
+      animationDuration: 900, animationEasing:'cubicOut'
+    }]
+  }, true);
+}
+
+chart.on('click', p => showDetail(p.data.id));
+
+async function showDetail(id){
+  const d = await fetch('/api/strategies/'+id).then(x=>x.json());
+  const live = d.live||{}, bt = d.backtest||{};
+  const dev = (bt.win_rate && live.win_rate)
+    ? ((live.win_rate - bt.win_rate)*100).toFixed(1)+'pp' : '—';
+  document.getElementById('detail').innerHTML = `
+    <h3>${d.name}</h3>
+    <div class="kv"><span>前向平均每笔</span><span>${fmtPct(live.avg_return||0)}</span></div>
+    <div class="kv"><span>前向胜率</span><span>${fmtPct(live.win_rate||0)}</span></div>
+    <div class="kv"><span>前向笔数</span><span>${live.trades||0}</span></div>
+    <div style="margin:14px 0 6px;color:#8b9bb4;font-size:12px">
+      — 以下为历史回测，仅供参考 —</div>
+    <div class="kv"><span>回测平均每笔</span><span>${fmtPct(bt.avg_return||0)}</span></div>
+    <div class="kv"><span>回测胜率</span><span>${fmtPct(bt.win_rate||0)}</span></div>
+    <div class="kv"><span>回测笔数</span><span>${bt.trades||0}</span></div>
+    <div class="kv"><span>盈亏比</span><span>${(bt.profit_factor||0).toFixed(2)}</span></div>
+    <div class="kv"><span>最大单笔亏损</span><span>${fmtPct(bt.max_loss||0)}</span></div>
+    <div class="kv"><span>前向/回测背离</span><span>${dev}</span></div>
+    <button class="ghost" onclick="loadTrades('${id}','backtest')">加载回测明细</button>
+    <div id="trades" class="muted" style="margin-top:8px"></div>`;
+}
+
+async function loadTrades(id, kind){
+  const r = await fetch(`/api/strategies/${id}/trades?kind=${kind}&page=1&size=8`).then(x=>x.json());
+  document.getElementById('trades').innerHTML =
+    `共 ${r.total} 笔，前 8 笔：<br/>` +
+    r.items.map(t=>`${t.code} ${t.entry_date}→${t.exit_date} ${(t.ret*100).toFixed(2)}%`).join('<br/>');
+}
+
+async function createStrategy(){
+  const name = document.getElementById('sname').value || ('策略' + Date.now()%10000);
+  let dsl;
+  try { dsl = JSON.parse(document.getElementById('dsl').value); }
+  catch(e){ alert('DSL 不是合法 JSON'); return; }
+  const s = await fetch('/api/strategies', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, raw_text:'', interpreted_cn:'', dsl})
+  }).then(x=>x.json());
+  const bt = await fetch(`/api/strategies/${s.id}/backtest`, {method:'POST'}).then(x=>x.json());
+  alert(`回测完成：${bt.metrics.trades} 笔，胜率 ${(bt.metrics.win_rate*100).toFixed(1)}%`);
+  loadRanking();
+}
+
+async function runDaily(){
+  const r = await fetch('/api/admin/run-daily', {method:'POST'}).then(x=>x.json());
+  alert(`最新交易日 ${r.date}，产生 ${r.results.length} 条策略信号`);
+}
+
+loadRanking();
+window.addEventListener('resize', ()=>chart.resize());
+</script>
+</body>
+</html>
