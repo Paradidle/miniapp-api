@@ -16,22 +16,191 @@ import urllib.request
 
 # ---------------- 指标白名单 ----------------
 INDICATORS = {
-    'close':          dict(window=False, desc='收盘价'),
-    'ret':            dict(window=True,  desc='N 日涨幅'),
-    'ma':             dict(window=True,  desc='N 日均线'),
-    'close_to_ma':    dict(window=True,  desc='收盘价相对 N 日均线的偏离'),
-    'vol_ratio':      dict(window=True,  desc='当日成交量 / 前 N 日均量'),
-    'amount_ratio':   dict(window=True,  desc='当日成交额 / 前 N 日均额'),
-    'high_n':         dict(window=True,  desc='前 N 日最高价'),
-    'low_n':          dict(window=True,  desc='前 N 日最低价'),
-    'breakout':       dict(window=True,  desc='收盘价相对前 N 日高点的偏离（>0 为突破）'),
-    'box_position':   dict(window=True,  desc='箱体位置 0~1（0=箱底, 1=箱顶）'),
-    'shadow_up':      dict(window=False, desc='上影线 / 收盘价'),
-    'shadow_down':    dict(window=False, desc='下影线 / 收盘价'),
-    'amplitude':      dict(window=True,  desc='N 日振幅 / 收盘价'),
-    'limit_up':       dict(window=False, desc='是否涨停（0/1）'),
-    'in_box':         dict(window=True,  desc='收盘价是否在箱体内（1=未突破未跌破）'),
-    'box_amplitude':  dict(window=True,  desc='箱体高度/箱底'),
+    'close': dict(
+        window=False, name='收盘价',
+        desc='当日收盘价（元）',
+        formula='C[t]',
+        params='无需参数',
+        range='> 0 的实数',
+        example='{"ind":"close","op":"<","value":6} → 股价低于 6 元',
+        note='直接用绝对价格。用它排序可选出「最便宜的」股票，但低价股退市风险更高。',
+    ),
+    'ret': dict(
+        window=True, name='N 日涨幅',
+        desc='最近 N 个交易日的累计涨跌幅',
+        formula='C[t] / C[t-N] - 1',
+        params='window = N（回看天数）',
+        range='小数，如 -0.15 表示下跌 15%',
+        example='{"ind":"ret","window":3,"op":"<","value":0} → 3 日累计下跌',
+        note='注意是「累计」不是「连续每天跌」。要表达连续阴线，需多个条件组合，当前 DSL 不支持。',
+    ),
+    'ma': dict(
+        window=True, name='N 日均线',
+        desc='最近 N 个交易日收盘价的算术平均',
+        formula='mean(C[t-N : t])',
+        params='window = N',
+        range='正数（元）',
+        example='{"ind":"ma","window":20,"op":">","value":10}',
+        note='均线本身是绝对价格，跨股票不可比，通常配合 close_to_ma 使用。',
+    ),
+    'close_to_ma': dict(
+        window=True, name='均线偏离',
+        desc='收盘价相对 N 日均线的偏离程度',
+        formula='C[t] / MA(N) - 1',
+        params='window = N',
+        range='小数；< 0 表示在均线下方',
+        example='{"ind":"close_to_ma","window":20,"op":"<","value":0} → 跌破 MA20',
+        note='跨股票可比，是判断「多头/空头排列」最常用的指标。',
+    ),
+    'vol_ratio': dict(
+        window=True, name='量比',
+        desc='当日成交量相对前 N 日均量的倍数',
+        formula='V[t] / mean(V[t-N : t])',
+        params='window = N（均量基准天数，常用 5 或 7）',
+        range='≥ 0；1 = 与均量持平，1.5 = 放量 50%，0.7 = 缩量 30%',
+        example='{"ind":"vol_ratio","window":7,"op":">=","value":1.5} → 放量 1.5 倍',
+        note='分母不含当天，所以「1.5 倍」是相对「昨天往前 N 天」的均值。⚠ 实测：加放量过滤反而降低收益。',
+    ),
+    'amount_ratio': dict(
+        window=True, name='额比',
+        desc='当日成交额相对前 N 日均额的倍数',
+        formula='A[t] / mean(A[t-N : t])',
+        params='window = N',
+        range='≥ 0，含义同量比',
+        example='{"ind":"amount_ratio","window":5,"op":">=","value":2}',
+        note='比量比更能反映真实资金量（成交量受价格影响）。',
+    ),
+    'high_n': dict(
+        window=True, name='N 日最高价',
+        desc='过去 N 个交易日（不含今天）的最高价',
+        formula='max(H[t-N : t])',
+        params='window = N',
+        range='正数（元）',
+        example='{"ind":"high_n","window":60,"op":"<","value":20}',
+        note='**不含当天**是刻意设计，这样当天突破时才有意义。',
+    ),
+    'low_n': dict(
+        window=True, name='N 日最低价',
+        desc='过去 N 个交易日（不含今天）的最低价',
+        formula='min(L[t-N : t])',
+        params='window = N',
+        range='正数（元）',
+        example='{"ind":"low_n","window":120,"op":">","value":3}',
+        note='**不含当天**。',
+    ),
+    'breakout': dict(
+        window=True, name='突破幅度',
+        desc='收盘价相对前 N 日最高价的突破幅度',
+        formula='C[t] / high_n(N) - 1',
+        params='window = N（前高回看天数）',
+        range='< 0 未突破；≥ 0 已突破；如 0.02 表示超出前高 2%',
+        example='{"ind":"breakout","window":60,"op":">=","value":0} → 突破 60 日新高',
+        note='⚠ 实测：突破新高买入 20 日超额 −2.51%（t=−20.5），是全样本最稳定的负信号之一。',
+    ),
+    'box_position': dict(
+        window=True, name='箱体位置',
+        desc='收盘价在过去 N 日高低区间中的相对位置',
+        formula='(C[t] - low_n) / (high_n - low_n)',
+        params='window = N（区间回看天数，常用 120）',
+        range='0 = 箱底，1 = 箱顶；**> 1 表示突破上方，< 0 表示跌破下方**',
+        example='{"ind":"box_position","window":120,"op":"<=","value":0.2} → 箱体底部 20% 以内',
+        note='⚠ 这是「滚动区间位置」，**不是识别出的箱体**：不做跨度、触碰次数、形态校验。'
+             '如果你要的是「3 年内找箱体、跨度至少 30 天」那种，当前不支持，'
+             '可用更大的 window（如 250/750）近似，但不做形态判定。',
+    ),
+    'in_box': dict(
+        window=True, name='是否在箱体内',
+        desc='收盘价是否严格落在过去 N 日高低区间内部',
+        formula='1 if low_n < C[t] < high_n else 0',
+        params='window = N',
+        range='1 = 在箱内；0 = 突破或跌破',
+        example='{"ind":"in_box","window":120,"op":"==","value":1} → 只在箱体内选股',
+        note='等价于 box_position 落在 (0,1) 开区间。用来明确表达「不要突破也不要跌破」。',
+    ),
+    'box_amplitude': dict(
+        window=True, name='箱体高度',
+        desc='过去 N 日最高价与最低价之差，相对最低价的比例',
+        formula='(high_n - low_n) / low_n',
+        params='window = N',
+        range='小数；0.15 表示箱体高度是最低价的 15%',
+        example='{"ind":"box_amplitude","window":120,"op":"between","value":[0.06,0.3]}',
+        note='用来要求「像箱子」而不是「一路单边」。⚠ 实测：加这个过滤反而降低收益。',
+    ),
+    'shadow_up': dict(
+        window=True, name='上影线',
+        desc='上影线长度占收盘价的比例',
+        formula='(H[t] - max(O[t], C[t])) / C[t]',
+        params='无需 window',
+        range='≥ 0；0.03 表示上影线是收盘价的 3%',
+        example='{"ind":"shadow_up","op":">=","value":0.03} → 长上影线',
+        note='长上影线常表示上方抛压重，是「高位滞涨」的典型特征。',
+    ),
+    'shadow_down': dict(
+        window=True, name='下影线',
+        desc='下影线长度占收盘价的比例',
+        formula='(min(O[t], C[t]) - L[t]) / C[t]',
+        params='无需 window',
+        range='≥ 0；0.02 表示下影线是收盘价的 2%',
+        example='{"ind":"shadow_down","op":">=","value":0.02} → 下影线超过 2%',
+        note='长下影线表示下方有承接。✅ 实测：这是全样本里少数真正有效的信号，'
+             '加它能显著提升收益（去掉后期望从 −0.46% 掉到 −1.32%）。',
+    ),
+    'amplitude': dict(
+        window=True, name='振幅',
+        desc='过去 N 日最高价与最低价之差，相对当日收盘价的比例',
+        formula='(high_n - low_n) / C[t]',
+        params='window = N',
+        range='小数',
+        example='{"ind":"amplitude","window":20,"op":">=","value":0.15}',
+        note='和 box_amplitude 类似，分母不同（这个是除以当前价）。',
+    ),
+    'box_pos_real': dict(
+        window=False, name='真箱体位置', params=True,
+        desc='识别出的一段横盘区间中，当前价所处的位置',
+        formula='(C[t] - 箱底) / (箱顶 - 箱底)',
+        params_desc='lookback 观察天数，min_span 最短跨度，min_touches 每边最少触碰',
+        range='0 = 箱底，1 = 箱顶；无有效箱体时为空值（该股票当天被排除）',
+        example='{"ind":"box_pos_real","params":{"lookback":750,"min_span":60,"min_touches":2},"op":"<=","value":0.3}',
+        note='**这是识别出的箱体**：会检查跨度、高度、上下沿触碰次数、是否单边倾斜。'
+             '从长到短尝试候选跨度，取最长的那个成立的箱体。'
+             '与 box_position 的区别：后者只是滚动高低区间，不做形态判定。',
+    ),
+    'box_valid': dict(
+        window=False, name='是否有箱体', params=True,
+        desc='当天是否存在符合参数的箱体',
+        formula='1 / 0',
+        params_desc='同 box_pos_real',
+        range='1 = 有箱体，0 = 无',
+        example='{"ind":"box_valid","op":"==","value":1} → 只要有箱体才选',
+        note='用来显式剔除「没有箱体形态」的股票。',
+    ),
+    'box_span_real': dict(
+        window=False, name='箱体跨度', params=True,
+        desc='识别出的箱体持续了多少个交易日',
+        formula='选中的 span',
+        params_desc='同 box_pos_real',
+        range='≥ min_span 的整数',
+        example='{"ind":"box_span_real","params":{"lookback":750,"min_span":60},"op":">=","value":120}',
+        note='可以要求「至少 3 个月的箱体」之类。',
+    ),
+    'box_amp_real': dict(
+        window=False, name='真箱体高度', params=True,
+        desc='识别出的箱体高度相对箱底的比例',
+        formula='(箱顶 - 箱底) / 箱底',
+        params_desc='同 box_pos_real',
+        range='小数，如 0.15 表示 15%',
+        example='{"ind":"box_amp_real","op":"between","value":[0.06,0.2]}',
+        note='要求「窄幅箱体」时用这个。',
+    ),
+    'limit_up': dict(
+        window=False, name='是否涨停',
+        desc='当日涨幅是否达到 9.8% 以上',
+        formula='1 if ret(1) >= 0.098 else 0',
+        params='无需参数',
+        range='0 或 1',
+        example='{"ind":"limit_up","op":"==","value":0} → 排除涨停',
+        note='简化判定（统一 9.8%），未区分主板/创业板/ST 的不同涨跌幅限制。',
+    ),
 }
 
 UNSUPPORTED_HINTS = {
@@ -115,6 +284,65 @@ def validate(dsl: dict) -> list[str]:
     return bad
 
 
+
+_CN_NUM = {'一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6}
+
+
+def parse_box_params(text: str) -> dict:
+    """从中文描述里提取箱体参数。
+
+    「5年内找箱体，跨度至少60天，触碰2次」→ {lookback:1250, min_span:60, min_touches:2}
+    """
+    t = text.replace(' ', '')
+
+    # 观察窗口
+    lookback = 250
+    m = re.search(r'(\d+)\s*年', t)
+    if m:
+        lookback = max(20, int(m.group(1)) * 250)
+    elif '半年' in t:
+        lookback = 125
+    elif '一年' in t:
+        lookback = 250
+    elif re.search(r'(\d+)\s*个?月', t):
+        lookback = max(20, int(re.search(r'(\d+)\s*个?月', t).group(1)) * 21)
+
+    # 最短跨度
+    min_span = 30
+    m = re.search(r'(?:跨度|持续|至少|不少于|大于)\D{0,6}?(\d+)\s*[天日]', t)
+    if m:
+        min_span = max(5, int(m.group(1)))
+    else:
+        m = re.search(r'(\d+)\s*个?月\D{0,4}?[以之]?上', t)
+        if m:
+            min_span = max(5, int(m.group(1)) * 21)
+
+    # 触碰次数
+    min_touches = 2
+    m = re.search(r'触[碰]?\D{0,3}?(\d+)\s*次', t)
+    if m:
+        min_touches = max(1, int(m.group(1)))
+    else:
+        m = re.search(r'触[碰]?\D{0,3}?([一二两三四五])\s*次', t)
+        if m:
+            min_touches = _CN_NUM.get(m.group(1), 2)
+    if re.search(r'只要?触[碰]?[过一]?次|触一次就', t):
+        min_touches = 1
+
+    return dict(lookback=int(lookback), min_span=int(min_span),
+                min_touches=int(min_touches))
+
+
+def wants_real_box(text: str) -> bool:
+    """是否需要「真箱体识别」（而不是滚动区间）"""
+    if re.search(r'真箱体|识别箱体|找箱体|箱体形态|成箱|形成箱体', text):
+        return True
+    # 出现「N年」「跨度」「触碰」等参数词，且提到箱体
+    if '箱' in text and re.search(r'\d+\s*年|跨度|触[碰]?|\d+\s*[天日].*箱', text):
+        return True
+    return False
+
+
 # ---------------- 规则兜底 ----------------
 _PCT = r'(\d+(?:\.\d+)?)\s*%'
 _NUM = r'(\d+(?:\.\d+)?)'
@@ -149,7 +377,7 @@ def rule_compile(text: str) -> dict:
     if m:
         sig.append(dict(ind='box_position', window=120, op='<=', value=pct(m.group(1))))
         notes.append(f'箱体位置≤{m.group(1)}%')
-    elif '箱底' in text or '箱体底部' in text:
+    elif not pos_set and ('箱底' in text or '箱体底部' in text):
         sig.append(dict(ind='box_position', window=120, op='<=', value=0.2))
         notes.append('箱体位置≤20%')
 
@@ -216,9 +444,39 @@ def rule_compile(text: str) -> dict:
         sig.append(dict(ind='ret', window=1, op='between', value=[lo, hi]))
         notes.append(f'当日涨幅 {lo*100:.0f}%~{hi*100:.0f}%')
 
+    # 真箱体：把 box_position 条件换成 box_pos_real + params
+    if wants_real_box(text):
+        bp = parse_box_params(text)
+        new_sig, replaced = [], False
+        for x in sig:
+            if x['ind'] == 'box_position':
+                if not replaced:
+                    new_sig.append(dict(ind='box_pos_real', params=bp,
+                                        op=x.get('op', '<='), value=x.get('value', 0.2)))
+                    notes.append(f'真箱体(观察{bp["lookback"]}天/跨度≥{bp["min_span"]}天/'
+                                 f'触{bp["min_touches"]}次)')
+                    replaced = True
+            else:
+                new_sig.append(x)
+        if not replaced:
+            new_sig.append(dict(ind='box_pos_real', params=bp, op='<=', value=0.2))
+            notes.append(f'真箱体(观察{bp["lookback"]}天/跨度≥{bp["min_span"]}天/'
+                         f'触{bp["min_touches"]}次)')
+        sig = new_sig
+        box_rank = dict(ind='box_pos_real', params=bp, desc=False)
+
     if not sig:
         hits = [f'{k}（{v}）' for k, v in UNSUPPORTED_HINTS.items() if k in text.lower()]
         raise UnsupportedIndicator(hits or ['无法从描述中识别出任何支持的指标'])
+
+    # 去重：同一条件只保留一次
+    seen_k, uniq = set(), []
+    for x in sig:
+        k = (x['ind'], x.get('op'), x.get('window'), json.dumps(x.get('value'), sort_keys=True))
+        if k not in seen_k:
+            seen_k.add(k)
+            uniq.append(x)
+    sig = uniq
 
     # 出场
     tp = 0.08
@@ -239,10 +497,14 @@ def rule_compile(text: str) -> dict:
     if 'window' in sig[0]:
         rank['window'] = sig[0]['window']
     # 语义修正：位置类条件（<= / between）意味着"越靠近箱底越好" → 升序
-    pos_cond = next((x for x in sig if x['ind'] == 'box_position'
-                     and x.get('op') in ('<=', '<', 'between')), None)
-    if pos_cond is not None:
-        rank = dict(ind='box_position', window=120, desc=False)
+    real_box = next((x for x in sig if x['ind'] == 'box_pos_real'), None)
+    if real_box is not None:
+        rank = dict(ind='box_pos_real', params=real_box.get('params'), desc=False)
+    else:
+        pos_cond = next((x for x in sig if x['ind'] == 'box_position'
+                         and x.get('op') in ('<=', '<', 'between')), None)
+        if pos_cond is not None:
+            rank = dict(ind='box_position', window=120, desc=False)
     if re.search(r'最便宜|股价最低|价格最低|低价|便宜的', text):
         rank = dict(ind='close', desc=False)
         notes.append('按股价从低到高选')
@@ -270,7 +532,8 @@ def rule_compile(text: str) -> dict:
 def _indicator_table() -> str:
     lines = []
     for k, v in INDICATORS.items():
-        w = '需要 window 参数' if v['window'] else '无需 window'
+        w = '需要 window 参数' if v['window'] else (
+            '需要 params 参数' if v.get('params') else '无需参数')
         lines.append(f'- {k}: {v["desc"]}（{w}）')
     return '\n'.join(lines)
 
@@ -305,6 +568,21 @@ def _system_prompt() -> str:
      或加 {{"ind":"in_box","op":"==","value":1}}
 6. 用户提到换手率/市值/财务/北向/龙虎榜/分钟线等，写进 unsupported 数组，不要编造指标
 7. 只输出 JSON，不要任何解释文字
+
+关于「箱体」有两种指标，必须区分：
+- box_position：滚动区间位置，只要 window（天数），不做形态判定
+- box_pos_real / box_valid / box_span_real / box_amp_real：真箱体识别，
+  需要 params：{{"lookback":观察天数,"min_span":最短跨度天数,"min_touches":每边最少触碰次数}}
+
+参数换算参考：
+- 「1年内」→ lookback 250；「3年」→ 750；「5年」→ 1250
+- 「至少30天」→ min_span 30；「至少60天/三个月」→ min_span 60
+- 「触碰1次就算」→ min_touches 1；「触碰2次」→ 2
+- 用户提到「箱体」但没说参数时，默认 lookback 250, min_span 30, min_touches 2
+
+示例：用户说「5年内找箱体，跨度至少60天，触过2次，位置在底部30%」应输出
+{{"ind":"box_pos_real","params":{{"lookback":1250,"min_span":60,"min_touches":2}},
+  "op":"<=","value":0.3}}
 """
 
 

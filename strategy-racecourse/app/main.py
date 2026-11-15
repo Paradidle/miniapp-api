@@ -145,7 +145,7 @@ def llm_test():
 @app.get('/api/indicators')
 def indicators():
     """可用指标白名单（前端展示用）"""
-    return {k: v['desc'] for k, v in INDICATORS.items()}
+    return INDICATORS
 
 
 @app.post('/api/strategies/compile')

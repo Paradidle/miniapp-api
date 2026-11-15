@@ -43,6 +43,20 @@
   .ok{background:#0f2418;border-color:var(--green)}
   .tag{display:inline-block;padding:2px 7px;border-radius:999px;background:#222c42;
        color:var(--muted);font-size:11px;margin:2px 4px 2px 0}
+  .tag{cursor:help;transition:background .15s,border-color .15s}
+  .tag:hover{background:#2d3c5c;color:#e6ecf7}
+  #tip{position:fixed;z-index:9999;width:400px;max-width:92vw;background:#0b1220;
+       border:1px solid #3a4a6b;border-radius:10px;padding:13px 15px;font-size:12px;
+       line-height:1.75;color:#c9d4e6;display:none;box-shadow:0 10px 32px rgba(0,0,0,.6);
+       pointer-events:none}
+  #tip h4{margin:0 0 3px;font-size:14px;color:var(--gold)}
+  #tip .en{color:#5d6b85;font-size:11px;font-family:ui-monospace,monospace;margin-bottom:8px}
+  #tip .row{display:flex;gap:8px;margin:4px 0}
+  #tip .k{color:#6f7f9a;flex:0 0 56px;text-align:right}
+  #tip .v{flex:1;word-break:break-word}
+  #tip code{background:#182238;padding:1px 5px;border-radius:4px;color:#8fd6ff;
+            font-family:ui-monospace,monospace;font-size:11px}
+  #tip .note{color:#f0a35e;margin-top:9px;border-top:1px dashed #2a3550;padding-top:8px}
   .spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--line);
            border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
@@ -101,6 +115,8 @@
     </div>
   </div>
 </div>
+
+<div id="tip"></div>
 
 <script src="/static/lib/echarts.min.js"></script>
 <script>
@@ -317,15 +333,72 @@ async function testLLM(){
   }catch(e){ $('llmStatus').innerHTML = `<b style="color:#ff5c7a">${e.message}</b>`; }
 }
 
+let IND_META = {};
+
 async function loadIndicators(){
   try{
-    const m = await api('/api/indicators');
-    const tags = Object.entries(m)
-      .map(([k,v]) => `<span class="tag" title="${v}">${k}</span>`).join('');
-    $('indList').innerHTML = '支持指标：' + tags
-      + '<br/>不支持：换手率、市值、财务指标、北向资金、龙虎榜、分钟级数据';
+    IND_META = await api('/api/indicators');
+    const tags = Object.entries(IND_META).map(([k,v]) =>
+      `<span class="tag" data-ind="${k}">${v.name || k}`
+      + `<span style="opacity:.5;margin-left:4px">${k}</span></span>`
+    ).join('');
+    $('indList').innerHTML =
+      '<div style="margin-bottom:6px">支持指标（<b>鼠标悬停看详细定义</b>）：</div>' + tags
+      + '<div style="margin-top:8px">不支持：换手率、市值、财务指标、北向资金、龙虎榜、分钟级数据</div>';
   }catch(e){}
 }
+
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+// 支持元数据里的 **加粗** 与 `代码` 标记
+const fmt = s => esc(s)
+  .replace(/\*\*(.+?)\*\*/g, '<b style="color:#e6ecf7">$1</b>')
+  .replace(/`(.+?)`/g, '<code>$1</code>');
+
+function buildTip(k){
+  const m = IND_META[k];
+  if(!m) return '';
+  const row = (label, val) => val
+    ? `<div class="row"><div class="k">${label}</div><div class="v">${val}</div></div>` : '';
+  return `<h4>${esc(m.name || k)}</h4><div class="en">${esc(k)}</div>`
+    + row('含义', fmt(m.desc))
+    + row('公式', m.formula ? `<code>${esc(m.formula)}</code>` : '')
+    + row('参数', fmt(m.params_desc || (typeof m.params === 'string' ? m.params : '')))
+    + row('取值', fmt(m.range))
+    + row('示例', m.example ? `<code>${esc(m.example)}</code>` : '')
+    + (m.note ? `<div class="note">${fmt(m.note)}</div>` : '');
+}
+
+function placeTip(x, y){
+  const t = $('tip');
+  const w = t.offsetWidth, h = t.offsetHeight;
+  let left = x + 16, top = y + 16;
+  if(left + w > innerWidth - 12) left = x - w - 16;
+  if(top + h > innerHeight - 12) top = innerHeight - h - 12;
+  if(top < 8) top = 8;
+  t.style.left = Math.max(8, left) + 'px';
+  t.style.top = top + 'px';
+}
+
+document.addEventListener('mouseover', e => {
+  const tag = e.target.closest('.tag[data-ind]');
+  if(!tag) return;
+  const html = buildTip(tag.dataset.ind);
+  if(!html) return;
+  const t = $('tip');
+  t.innerHTML = html;
+  t.style.display = 'block';
+  placeTip(e.clientX, e.clientY);
+});
+
+document.addEventListener('mousemove', e => {
+  const t = $('tip');
+  if(t.style.display === 'block') placeTip(e.clientX, e.clientY);
+});
+
+document.addEventListener('mouseout', e => {
+  if(e.target.closest('.tag[data-ind]')) $('tip').style.display = 'none';
+});
 
 initChart();
 loadAll();

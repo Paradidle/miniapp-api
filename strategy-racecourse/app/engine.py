@@ -29,6 +29,44 @@ COST = 0.00025 * 2 + 0.0005 + 0.001
 FLAT_PROBE = 'sh\\lday\\sh000001.day'
 
 
+def roll_vanherk(X, w, mode='min'):
+    """滑动极值，窗口 [t-w, t)（不含当天），复杂度 O(n·m)。
+
+    等价于对每个 t 求 min/max(X[:, t-w:t])，但用分块前后缀极值加速。
+    """
+    n, m = X.shape
+    if w < 1 or w >= m:
+        raise ValueError(f'window 越界: {w}')
+    fill = np.inf if mode == 'min' else -np.inf
+    Xf = np.where(np.isnan(X), fill, X).astype(np.float32)
+    pad = (-m) % w
+    Xp = np.concatenate([Xf, np.full((n, pad), fill, np.float32)], axis=1) if pad else Xf
+    L = Xp.shape[1]
+    blocks = Xp.reshape(n, L // w, w)
+    acc = np.minimum.accumulate if mode == 'min' else np.maximum.accumulate
+    pre = acc(blocks, axis=2).reshape(n, L)
+    suf = acc(blocks[:, :, ::-1], axis=2)[:, :, ::-1].reshape(n, L)
+    op = np.minimum if mode == 'min' else np.maximum
+    incl = np.full((n, L), fill, np.float32)
+    incl[:, w - 1:] = op(suf[:, :L - w + 1], pre[:, w - 1:])
+    out = np.full((n, m), fill, np.float32)
+    out[:, 1:] = incl[:, :m - 1]
+    out[out == fill] = np.nan
+    return out.astype(np.float32)
+
+
+def window_sum(cs, w):
+    """对 cumsum 结果求 [t-w, t) 区间和，返回 (n, m)"""
+    n, m = cs.shape
+    hi = np.arange(m) - 1
+    lo = np.arange(m) - w
+    valid = lo >= 0
+    out = np.zeros((n, m), np.float32)
+    out[:, valid] = cs[:, hi[valid]] - np.where(lo[valid] > 0,
+                                               cs[:, np.maximum(lo[valid] - 1, 0)], 0.0)
+    return out
+
+
 def resolve_vipdoc(p: str | Path) -> Path:
     """兼容两种布局，返回数据目录（不含是否 flat 的信息，供旧调用方使用）"""
     return detect_layout(p)[0]
@@ -193,8 +231,9 @@ class Market:
             out[:, t] = f(X[:, t - w:t])
         return out
 
-    def indicator(self, name: str, window: int = 1) -> np.ndarray:
-        key = (name, window)
+    def indicator(self, name: str, window: int = 1, params: dict | None = None) -> np.ndarray:
+        params = params or {}
+        key = (name, window, tuple(sorted(params.items())))
         if key in self._cache:
             return self._cache[key]
         C, O, H, L, V, A = self.C, self.O, self.H, self.L, self.V, self.A
@@ -246,6 +285,17 @@ class Market:
                 ln = self.indicator('low_n', w)
                 # 箱体高度 / 箱底（比 amplitude 更贴近"箱体"定义）
                 v = (hn - ln) / ln
+            elif name in ('box_pos_real', 'box_valid', 'box_span_real', 'box_amp_real'):
+                pos, val, spn, amp = self.box_detect(
+                    lookback=int(params.get('lookback', 250)),
+                    min_span=int(params.get('min_span', 30)),
+                    min_touches=int(params.get('min_touches', 2)),
+                    amp_min=float(params.get('amp_min', 0.04)),
+                    amp_max=float(params.get('amp_max', 0.35)),
+                    drift_max=float(params.get('drift_max', 0.55)),
+                )
+                v = {'box_pos_real': pos, 'box_valid': val,
+                     'box_span_real': spn, 'box_amp_real': amp}[name]
             elif name == 'limit_up':
                 r = self.indicator('ret', 1)
                 v = (r >= 0.098).astype(np.float32)
@@ -254,6 +304,91 @@ class Market:
         v = v.astype(np.float32)
         self._cache[key] = v
         return v
+
+    def box_detect(self, lookback=250, min_span=30, min_touches=2,
+                   amp_min=0.04, amp_max=0.35, drift_max=0.55, touch_win=20):
+        """识别「真箱体」：过去 lookback 天内最长的一段横盘区间。
+
+        判定条件（全部满足才算箱体）：
+          1. 跨度 span >= min_span
+          2. 高度 (hn-ln)/ln 落在 [amp_min, amp_max]
+          3. 窗口内「创 touch_win 日新低」次数 >= min_touches，
+             且「创 touch_win 日新高」次数 >= min_touches
+          4. 漂移 |C[t-1]-C[t-span]| / (hn-ln) <= drift_max（排除单边趋势）
+        触碰的定义：当日最低价 <= 前 touch_win 日最低价（创 20 日新低）。
+        这样 min_touches=1 表示「箱底被探过一次」，2 表示探过两次。
+
+        从长到短尝试候选跨度，取第一个成立的（最长的箱体）。
+        返回 (pos, valid, span, amp)：
+          pos   箱体位置 0~1（无箱体为 NaN）
+          valid 1/0
+          span  选中的跨度天数
+          amp   箱体高度比例
+        """
+        key = ('__box', lookback, min_span, min_touches, amp_min, amp_max, drift_max, touch_win)
+        params_touch_win = touch_win
+        if key in self._cache:
+            return self._cache[key]
+
+        n, m = self.n, self.m
+        L, H, C = self.L, self.H, self.C
+
+        # 候选跨度阶梯：min_span, 2x, 4x ... 直到 lookback
+        spans, sp = [], int(min_span)
+        while sp <= lookback:
+            spans.append(sp)
+            sp *= 2
+        if sp // 2 < lookback:
+            spans.append(int(lookback))
+        spans = sorted(set(spans))
+
+        # 「触碰」= 创 touch_win 日新低 / 新高（真正的下探到边缘）
+        tw = int(params_touch_win)
+        min_prev = roll_vanherk(L, tw, 'min')      # 前 tw 日最低（不含当天）
+        max_prev = roll_vanherk(H, tw, 'max')
+        touch_lo = (L <= min_prev).astype(np.float32)   # 当天创 tw 日新低
+        touch_hi = (H >= max_prev).astype(np.float32)   # 当天创 tw 日新高
+        touch_lo[~np.isfinite(min_prev)] = 0
+        touch_hi[~np.isfinite(max_prev)] = 0
+        cs_lo = np.cumsum(touch_lo, axis=1)
+        cs_hi = np.cumsum(touch_hi, axis=1)
+
+        pos = np.full((n, m), np.nan, np.float32)
+        val = np.zeros((n, m), np.float32)
+        spn = np.full((n, m), np.nan, np.float32)
+        amp_out = np.full((n, m), np.nan, np.float32)
+        chosen = np.zeros((n, m), bool)
+
+        c_prev = np.full((n, m), np.nan, np.float32)
+        c_prev[:, 1:] = C[:, :-1]
+
+        for sp_ in sorted(spans, reverse=True):
+            ln = roll_vanherk(L, sp_, 'min')
+            hn = roll_vanherk(H, sp_, 'max')
+            rng = hn - ln
+            with np.errstate(invalid='ignore', divide='ignore'):
+                amp = rng / ln
+                cnt_lo = window_sum(cs_lo, sp_)
+                cnt_hi = window_sum(cs_hi, sp_)
+                c_old = np.full((n, m), np.nan, np.float32)
+                c_old[:, sp_:] = C[:, :-sp_]
+                drift = np.abs(c_prev - c_old) / rng
+                ok = (np.isfinite(rng) & (rng > 0)
+                      & (amp >= amp_min) & (amp <= amp_max)
+                      & (cnt_lo >= min_touches) & (cnt_hi >= min_touches)
+                      & (drift <= drift_max))
+            take = ok & ~chosen
+            if take.any():
+                with np.errstate(invalid='ignore', divide='ignore'):
+                    pos[take] = ((C - ln) / rng)[take]
+                val[take] = 1.0
+                spn[take] = sp_
+                amp_out[take] = amp[take]
+                chosen |= take
+
+        res = (pos, val, spn, amp_out)
+        self._cache[key] = res
+        return res
 
     def risk_mask(self) -> np.ndarray:
         """风险过滤：次新股 / 低价股 / 小市值。
@@ -297,7 +432,7 @@ class Market:
     def signal(self, conds) -> np.ndarray:
         mask = np.ones((self.n, self.m), dtype=bool)
         for c in conds:
-            v = self.indicator(c['ind'], int(c.get('window', 1)))
+            v = self.indicator(c['ind'], int(c.get('window', 1)), c.get('params'))
             op, val = c['op'], c['value']
             if op == '>=':
                 mask &= v >= val
@@ -324,7 +459,8 @@ class Market:
         """返回 (trades, equity_curve)。每交易日取 top1。"""
         mask = self.signal(dsl['signal'])
         rank_cfg = dsl.get('rank_by')
-        rank = (self.indicator(rank_cfg['ind'], int(rank_cfg.get('window', 1)))
+        rank = (self.indicator(rank_cfg['ind'], int(rank_cfg.get('window', 1)),
+                               rank_cfg.get('params'))
                 if rank_cfg else None)
         rank_desc = bool(rank_cfg.get('desc', True)) if rank_cfg else True
         n_per_day = int(dsl.get('entry', {}).get('max_per_day', 1))
