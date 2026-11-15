@@ -16,7 +16,25 @@ export PORT
 
 # 数据目录与存储目录（可在外部覆盖）
 export TDX_VIPDOC="${TDX_VIPDOC:-/data/vipdoc}"
-export RACE_DATA="${RACE_DATA:-$APP_DIR/data}"
+
+# ⚠ RACE_DATA 必须放在部署目录之外！
+# Jenkins 用 rsync --delete 同步代码，部署目录内任何不在仓库里的文件都会被删除，
+# 而 data/ 在 .gitignore 里 —— 放进去等于每次部署都清空所有策略。
+export RACE_DATA="${RACE_DATA:-/data/racecourse}"
+
+# 部署目录安全检查
+case "$RACE_DATA" in
+    "$APP_DIR"|"$APP_DIR"/*)
+        echo "==============================================================="
+        echo "[严重] RACE_DATA 位于部署目录内：$RACE_DATA"
+        echo "       Jenkins 的 rsync --delete 会在每次部署时删除这个目录，"
+        echo "       所有策略和历史结果都会丢失！"
+        echo "       请改为部署目录之外的路径，例如："
+        echo "         export RACE_DATA=/data/racecourse"
+        echo "==============================================================="
+        ;;
+esac
+mkdir -p "$RACE_DATA" 2>/dev/null || true
 
 # 数据目录自检（运行时也会自动探测，这里只做提示）
 if [ ! -f "$TDX_VIPDOC/sh/lday/sh000001.day" ] && \

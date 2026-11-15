@@ -14,6 +14,40 @@
 
 **端口：9201**　**健康检查：`GET /healthz`**（不加载数据，立即返回）
 
+## ⚠ 0. 数据目录必须在部署目录之外（会导致数据丢失）
+
+Jenkins 用 `rsync -az --delete` 同步代码，会**删除部署目录里所有不在 git 仓库中的文件**。
+`data/` 在 `.gitignore` 中，仓库里没有它，所以：
+
+```
+RACE_DATA=/usr/strategy-racecourse/data   ❌ 在部署目录内 → 每次部署被清空
+RACE_DATA=/data/racecourse                ✅ 部署目录之外
+```
+
+**双重保险**：流水线的 rsync 加上排除项。
+
+```groovy
+rsync -az --delete \
+    --exclude='.venv/' \
+    --exclude='data/' \        // ← 加上这一行
+    ...
+```
+
+检查方法：
+
+```bash
+curl -s http://127.0.0.1:9201/api/health | python3 -m json.tool | grep -E 'data_dir'
+# "data_dir": "/data/racecourse",
+# "data_dir_warning": ""
+```
+
+若 `data_dir_warning` 非空，说明配置有风险，部署后会丢数据。
+
+### 已经丢了怎么办
+
+- 服务器有快照/备份 → 恢复 `data/` 目录
+- 没有备份 → 用自然语言重建（现在一条 `from-text` 就能建一个策略）
+
 ## 1. 手动部署
 
 ```bash

@@ -92,6 +92,11 @@ def health():
         vipdoc=VIPDOC,
         vipdoc_resolved=str(mk.vipdoc),
         layout='flat' if getattr(mk, 'flat', False) else 'nested',
+        data_dir=os.path.abspath(DATA),
+        data_dir_warning=(
+            'RACE_DATA 位于应用目录内，Jenkins 部署时会被 rsync --delete 清空'
+            if os.path.abspath(DATA).startswith(os.path.abspath(
+                os.path.dirname(os.path.dirname(__file__)))) else ''),
         risk=risk_info,
         stocks=mk.n,
         days=mk.m,
