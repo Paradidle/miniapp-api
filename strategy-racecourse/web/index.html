@@ -69,7 +69,15 @@
 </header>
 
 <div class="wrap">
-  <div class="panel"><div id="chart"></div></div>
+  <div class="panel">
+    <div class="tabs" style="margin-bottom:8px">
+      <span style="color:#8b9bb4;font-size:12px;align-self:center;margin-right:4px">排序依据</span>
+      <div class="tab on" data-sort="avg" onclick="switchSort('avg')">平均每笔</div>
+      <div class="tab" data-sort="total" onclick="switchSort('total')">总收益率</div>
+      <div class="tab" data-sort="annual" onclick="switchSort('annual')">年化收益</div>
+    </div>
+    <div id="chart"></div>
+  </div>
 
   <div>
     <div class="panel" id="detailPanel" style="margin-bottom:16px">
@@ -158,6 +166,27 @@ async function loadAll(){
   }
 }
 
+let sortKey = 'avg';
+
+function switchSort(k){
+  sortKey = k;
+  document.querySelectorAll('.tab[data-sort]').forEach(t =>
+    t.classList.toggle('on', t.dataset.sort === k));
+  render();
+}
+
+function metricOf(r){
+  const live = r.live_trades >= 10;
+  const pick = (a, b) => live ? a : b;
+  if(sortKey === 'total') return pick(r.live_total, r.bt_total) * 100;
+  if(sortKey === 'annual') return pick(r.live_annual, r.bt_annual) * 100;
+  return pick(r.live_avg, r.bt_avg) * 100;
+}
+
+function sortedRows(){
+  return [...rows].sort((a, b) => metricOf(b) - metricOf(a));
+}
+
 function render(){
   if(!rows.length){
     chart.setOption({title:{text:'还没有策略', subtext:'右侧用自然语言新建一个',
@@ -165,15 +194,20 @@ function render(){
       subtextStyle:{color:'#8b9bb4',fontSize:13}}}, true);
     return;
   }
-  const names = rows.map(r => r.name);
-  const data = rows.map(r => {
+  const view = sortedRows();
+  const names = view.map(r => r.name);
+  const data = view.map(r => {
     const useLive = r.live_trades >= 10;
-    const v = (useLive ? r.live_avg : r.bt_avg) * 100;
+    const v = metricOf(r);
     return {
-      value: +v.toFixed(3), id: r.id,
+      value: +v.toFixed(sortKey === 'avg' ? 3 : 2), id: r.id,
       win: (useLive ? r.live_win_rate : r.bt_win_rate) * 100,
       n: useLive ? r.live_trades : r.bt_trades,
       pf: r.bt_pf || 0, src: useLive ? '前向' : '回测',
+      avg: (useLive ? r.live_avg : r.bt_avg) * 100,
+      total: (useLive ? r.live_total : r.bt_total) * 100,
+      annual: (useLive ? r.live_annual : r.bt_annual) * 100,
+      pos: useLive ? r.live_pos : r.bt_pos,
       itemStyle: {
         borderRadius: [0,6,6,0],
         color: v > 0.001 ? '#37d67a' : (v > 0 ? '#f2c14e' : '#ff5c7a')
@@ -190,18 +224,20 @@ function render(){
     grid:{left:170, right:130, top:24, bottom:34},
     tooltip:{trigger:'item', formatter: p => {
       const d = p.data;
-      return `<b>${p.name}</b><br/>${d.src}平均每笔 ${p.value.toFixed(2)}%<br/>`
-           + `胜率 ${d.win.toFixed(1)}%<br/>${d.n} 笔 · PF ${d.pf.toFixed(2)}`;
+      return `<b>${p.name}</b><br/>`
+           + `总收益率 <b>${d.total.toFixed(1)}%</b>　年化 <b>${d.annual.toFixed(2)}%</b><br/>`
+           + `平均每笔 ${d.avg.toFixed(2)}%　胜率 ${d.win.toFixed(1)}%<br/>`
+           + `${d.n} 笔 · PF ${d.pf.toFixed(2)} · 平均持仓 ${d.pos.toFixed(1)} 笔`;
     }},
     xAxis:{type:'value', min:-span, max:span,
-           axisLabel:{formatter:v=>v.toFixed(2)+'%', color:'#8b9bb4'},
+           axisLabel:{formatter:v=>v.toFixed(1)+'%', color:'#8b9bb4'},
            splitLine:{lineStyle:{color:'#1d2740'}}},
     yAxis:{type:'category', data:names, inverse:true,
            axisLabel:{color:'#c9d4e6', fontSize:12},
            axisLine:{lineStyle:{color:'#26304a'}}},
     series:[{type:'bar', barWidth:'56%', data,
              label:{show:true, position:'right', color:'#e6ecf7', fontSize:12,
-                    formatter: p => p.value.toFixed(2) + '%'},
+                    formatter: p => p.value.toFixed(p.value < 1 ? 2 : 1) + '%'},
              animationDuration:900, animationEasing:'cubicOut'}]
   }, true);
 }
@@ -217,10 +253,17 @@ async function showDetail(id){
     $('detailPanel').innerHTML = `
       <h3>${d.name}</h3>
       <div class="muted" style="margin-bottom:10px">${d.interpreted_cn || ''}</div>
+      <div class="kv"><span>前向总收益率</span><span>${pct(live.total_return)}</span></div>
+      <div class="kv"><span>前向年化</span><span>${pct(live.annual_return)}</span></div>
       <div class="kv"><span>前向平均每笔</span><span>${pct(live.avg_return)}</span></div>
+      <div class="kv"><span>前向平均持仓</span><span>${(live.avg_positions||0).toFixed(1)} 笔</span></div>
       <div class="kv"><span>前向胜率 / 笔数</span><span>${pct(live.win_rate)} / ${live.trades||0}</span></div>
       <div style="margin:12px 0 6px;color:#8b9bb4;font-size:12px">— 历史回测（仅参考）—</div>
+      <div class="kv"><span>回测总收益率</span><span>${pct(bt.total_return)}</span></div>
+      <div class="kv"><span>回测年化</span><span>${pct(bt.annual_return)}</span></div>
       <div class="kv"><span>回测平均每笔</span><span>${pct(bt.avg_return)}</span></div>
+      <div class="kv"><span>累计盈亏</span><span>${(bt.sum_return||0).toFixed(1)} 倍本金</span></div>
+      <div class="kv"><span>平均仓位</span><span>${(bt.avg_positions||0).toFixed(1)} 笔 / ${(bt.years||0).toFixed(1)} 年</span></div>
       <div class="kv"><span>回测胜率 / 笔数</span><span>${pct(bt.win_rate)} / ${bt.trades||0}</span></div>
       <div class="kv"><span>盈亏比</span><span>${(bt.profit_factor||0).toFixed(2)}</span></div>
       <div class="kv"><span>最大单笔亏损</span><span>${pct(bt.max_loss)}</span></div>

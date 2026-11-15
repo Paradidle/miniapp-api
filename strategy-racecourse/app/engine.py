@@ -508,26 +508,51 @@ class Market:
                     reason=reason,
                     hold_days=k + 1,
                 ))
-        return trades, self._metrics(trades)
+        return trades, self._metrics(trades, self.m - max(start, 60))
 
     @staticmethod
-    def _metrics(trades):
+    def _metrics(trades, n_days=1):
         """等额投资口径：每笔投入相同金额，总收益 = 各笔收益率之和。"""
         if not trades:
             return dict(trades=0, win_rate=0.0, total_return=0.0, avg_return=0.0,
-                        median_return=0.0, profit_factor=0.0, avg_hold=0.0,
+                        median_return=0.0, sum_return=0.0, annual_return=0.0,
+                        avg_positions=0.0, years=0.0, profit_factor=0.0, avg_hold=0.0,
                         max_loss=0.0, max_gain=0.0, max_drawdown=0.0)
         r = np.array([x['ret'] for x in trades], dtype=float)
         wins, losses = r[r > 0], r[r <= 0]
         cum = np.cumsum(r)
         peak = np.maximum.accumulate(cum)
-        dd = float((cum - peak).min())          # 累计收益曲线的最大回撤（单位：倍本金）
+        dd = float((cum - peak).min())          # 累计盈亏曲线的最大回撤（单笔本金倍数）
+
+        # ---- 总收益率口径 ----
+        # 等额投资：每笔投入相同本金，累计盈亏 = Σr
+        # 但同一时间持有多笔，实际占用资金 = Σ持仓天数 / 总交易日 = 平均并发持仓数
+        hold_sum = float(np.sum([x['hold_days'] for x in trades]))
+        avg_pos = hold_sum / max(int(n_days), 1)
+        sum_ret = float(r.sum())
+        # 相对「实际占用资金」的总收益率
+        cap_ret = sum_ret / avg_pos if avg_pos > 0 else 0.0
+        # 现实中最多亏光本金：总收益率不可能低于 -100%
+        bankrupt = cap_ret <= -1
+        if bankrupt:
+            cap_ret = -1.0
+        years = max(int(n_days), 1) / 250.0
+        if bankrupt:
+            annual = -1.0
+        else:
+            annual = (1.0 + cap_ret) ** (1.0 / years) - 1.0 if years >= 0.5 else cap_ret
+
         return dict(
             trades=int(len(r)),
             win_rate=round(float((r > 0).mean()), 4),
-            total_return=round(float(r.sum()), 4),      # 累计收益率（等额投资）
-            avg_return=round(float(r.mean()), 5),       # 平均每笔收益率
+            avg_return=round(float(r.mean()), 5),       # 平均每笔收益率（核心）
             median_return=round(float(np.median(r)), 4),
+            sum_return=round(sum_ret, 4),               # 累计盈亏（倍单笔本金）
+            total_return=round(float(cap_ret), 4),      # 总收益率（相对占用资金）
+            annual_return=round(float(annual), 4),      # 年化
+            bankrupt=bool(bankrupt),                    # 是否亏光本金
+            avg_positions=round(float(avg_pos), 2),     # 平均并发持仓
+            years=round(float(years), 2),
             profit_factor=round(float(wins.sum() / max(-losses.sum(), 1e-9)), 3),
             avg_hold=round(float(np.mean([x['hold_days'] for x in trades])), 1),
             max_loss=round(float(r.min()), 4),

@@ -116,12 +116,18 @@ class Repo:
                 live_avg=live.get('avg_return', 0),
                 live_total=live.get('total_return', 0),
                 # 回测（详情页参考）
+                live_annual=live.get('annual_return', 0),
+                live_pos=live.get('avg_positions', 0),
                 bt_trades=bt.get('trades', 0),
                 bt_win_rate=bt.get('win_rate', 0),
                 bt_avg=bt.get('avg_return', 0),
                 bt_pf=bt.get('profit_factor', 0),
                 bt_max_loss=bt.get('max_loss', 0),
-                bt_total=bt.get('total_return', 0),
+                bt_total=bt.get('total_return', 0),      # 总收益率（相对占用资金）
+                bt_sum=bt.get('sum_return', 0),          # 累计盈亏（倍单笔本金）
+                bt_annual=bt.get('annual_return', 0),
+                bt_pos=bt.get('avg_positions', 0),
+                bt_years=bt.get('years', 0),
             ))
         # 优先按前向平均收益率，前向样本不足时退回回测
         rows.sort(key=lambda r: (-(r['live_avg'] if r['live_trades'] >= 10 else r['bt_avg'])))
