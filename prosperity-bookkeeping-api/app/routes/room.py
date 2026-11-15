@@ -75,10 +75,17 @@ def get_room_or_404(room_id=None, room_no=None):
 
 
 def list_members(room_id):
+    """房间成员列表。昵称/头像实时 JOIN users 取最新值（成员资料可能在加入后更新），
+    room_members 快照仅在 users 值为空时兜底，与流水接口的展示口径保持一致。"""
     return fetchall(
-        '''SELECT openid, nickname, avatar_url, score, role
-           FROM room_members WHERE room_id=%s
-           ORDER BY role ASC, joined_at ASC, id ASC''',
+        '''SELECT rm.openid,
+                  COALESCE(NULLIF(u.nickname, ''), rm.nickname) AS nickname,
+                  COALESCE(NULLIF(u.avatar_url, ''), rm.avatar_url) AS avatar_url,
+                  rm.score, rm.role
+           FROM room_members rm
+           LEFT JOIN users u ON u.id = rm.user_id
+           WHERE rm.room_id=%s
+           ORDER BY rm.role ASC, rm.joined_at ASC, rm.id ASC''',
         (room_id,)
     )
 

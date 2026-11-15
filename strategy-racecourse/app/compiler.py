@@ -103,6 +103,12 @@ def validate(dsl: dict) -> list[str]:
     rb = dsl.get('rank_by') or {}
     if rb.get('ind') and rb['ind'] not in INDICATORS:
         bad.append(str(rb['ind']))
+    seen, uniq = set(), []
+    for x in bad:
+        if x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    bad = uniq
     for c in dsl.get('signal', []):
         if c.get('ind') in INDICATORS and not INDICATORS[c['ind']]['window']:
             c.pop('window', None)
@@ -228,10 +234,15 @@ def rule_compile(text: str) -> dict:
     if m:
         hd = int(float(m.group(1)))
 
-    # 排序：用户说"最便宜的/股价最低"时按 close 升序
+    # 排序：默认取第一个信号指标
     rank = dict(ind=sig[0]['ind'], desc=True)
     if 'window' in sig[0]:
         rank['window'] = sig[0]['window']
+    # 语义修正：位置类条件（<= / between）意味着"越靠近箱底越好" → 升序
+    pos_cond = next((x for x in sig if x['ind'] == 'box_position'
+                     and x.get('op') in ('<=', '<', 'between')), None)
+    if pos_cond is not None:
+        rank = dict(ind='box_position', window=120, desc=False)
     if re.search(r'最便宜|股价最低|价格最低|低价|便宜的', text):
         rank = dict(ind='close', desc=False)
         notes.append('按股价从低到高选')

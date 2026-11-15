@@ -153,3 +153,9 @@ ExecStart 调 `curl -X POST http://127.0.0.1:8000/api/admin/run-daily`。
 2. **复利假设满仓单笔**：`total_return` 按每笔全仓复利计算，实际应按仓位折算。
 3. **回测未做样本外切分**：赛马图只用 `live` 指标，回测仅作参考。
 4. **指标尚未注册未来函数检查**：所有指标都是 rolling（因果），但新增指标需自行确认。
+
+
+## LLM 接口
+
+- `GET /api/llm/status` — 配置状态（不含 key 明文）
+- `POST /api/llm/test` — 真实调用验证
